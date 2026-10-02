@@ -64,14 +64,19 @@ export function ControlOverlay({
 
   return (
     <>
+      {/* The glow is painted once. Animating box-shadow repaints the full viewport
+          every frame, so the onset cue animates only the opacity of a pre-painted
+          layer (compositor-only), runs two cycles, then rests. */}
       <style>{`
-        @keyframes bsk-breathe {
-          0%, 100% {
-            box-shadow: inset 0 0 20px 4px rgba(249,115,22,0.25);
-          }
-          50% {
-            box-shadow: inset 0 0 40px 8px rgba(249,115,22,0.5);
-          }
+        @keyframes bsk-glow-pulse {
+          0%, 100% { opacity: 0; }
+          50% { opacity: 1; }
+        }
+        [data-slot="control-overlay-pulse"] {
+          animation: bsk-glow-pulse 3s ease-in-out 2;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          [data-slot="control-overlay-pulse"] { animation: none; }
         }
       `}</style>
 
@@ -82,11 +87,21 @@ export function ControlOverlay({
           inset: 0,
           zIndex: 2147483646,
           pointerEvents: "none",
-          animation: "bsk-breathe 3s ease-in-out infinite",
+          boxShadow: "inset 0 0 28px 6px rgba(249,115,22,0.35)",
           opacity: show ? 1 : 0,
           transition: "opacity 300ms ease-out",
         }}
-      />
+      >
+        <div
+          data-slot="control-overlay-pulse"
+          style={{
+            position: "absolute",
+            inset: 0,
+            opacity: 0,
+            boxShadow: "inset 0 0 40px 8px rgba(249,115,22,0.3)",
+          }}
+        />
+      </div>
 
       <div
         ref={blockerRef}
