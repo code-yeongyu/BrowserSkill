@@ -1,5 +1,7 @@
 # BrowserSkill
 
+> **This is a fork of [Tencent/BrowserSkill](https://github.com/Tencent/BrowserSkill)** (MIT, copyright Tencent; see [LICENSE](LICENSE)). All credit for BrowserSkill goes to its upstream authors. The fork carries a small set of performance fixes listed in [changes.md](changes.md) and is kept rebaseable onto upstream `main`.
+
 <p align="center">
   <img src="docs/assets/browserskill-readme-banner.png" alt="BrowserSkill — connect your AI agent to your browser" />
 </p>

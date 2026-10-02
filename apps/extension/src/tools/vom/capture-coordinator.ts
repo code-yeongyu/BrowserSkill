@@ -8,6 +8,7 @@ import {
 } from "@/browser-driver/frame-graph";
 import { cssViewport, GeometryContext } from "../geometry/frame-context";
 import { type CdpRunner, cdpRunnerForTarget } from "../shared";
+import { releaseAccessibilityDomain } from "./ax-domain-release";
 import { collectOverlayExcludedBackendIds } from "./capture";
 import {
   isCaptureTerminalError as isCaptureAbort,
@@ -266,6 +267,11 @@ export async function captureObservationFacts<T extends FrameOwnedAxNode>(
     signal,
   );
   for (const task of axTasks) if (task.result) task.batch.ax.push(task.result);
+  await collectTasks(
+    batches.filter((batch) => axReady.has(batch) && !stopped.has(batch)),
+    (batch) => releaseAccessibilityDomain(cdp, tabId, batch.target),
+    signal,
+  );
 
   // A snapshot claim outranks an old graph hint. Conflicting actual claims
   // cannot be resolved by completion order or by overwriting a frameId map.
