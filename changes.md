@@ -25,11 +25,24 @@ Upstream base: `3f10983` (0.3.2).
 
 ### Post-stop tail
 
-- **Finding:** the reported ~60 s CPU tail after `session stop` is not a cost the extension keeps running. The stop path returns tabs, clears refs, detaches CDP and closes the agent window, and the agent window's renderer exits at stop. In two runs on store 0.3.2, the GPU process was back near its baseline within 30 s in one run (33, 24, 26% vs a 36% baseline) and stayed above it in the other (46-55% vs 28%), while page renderers that belong to the owner's own tabs moved independently of the session. The extension's worker shows a short burst right after stop (stop handling, then MV3 idle shutdown about 30 s later), which is expected. No code change was made for the tail.
+- **Finding:** the reported ~60 s CPU tail after `session stop` is not caused by the extension. The stop path returns tabs, clears refs, detaches CDP and closes the agent window, and the agent window's renderer exits at stop. In an isolated browser profile (controlled A/B below), every process is back at its idle baseline within 30 s of `session stop` for both the store build and this fork. In the owner's in-use browser the post-stop numbers moved with the owner's own tabs (back at baseline in one run, above it in the other). No code change was needed for the tail.
 
 ### Measurements
 
-Percent of one core, mean over each window. `gpu` = GPU process, `ext` = all extension processes, `total` = all browser processes.
+Percent of one core, mean over each window. `gpu` = GPU process, `total` = all browser processes.
+
+**Controlled A/B (2026-10-02).** A fresh headless Chrome for Testing 154 profile per run, with only the extension under test loaded unpacked, connected to the same `bsk` daemon as its own browser instance. Builds alternate so machine load hits both equally. This isolates the extension from everything else the browser is doing.
+
+| Run | Build | baseline total / gpu | session total / gpu | post 0-30 s total | post 30-90 s total |
+| --- | --- | --- | --- | --- | --- |
+| 01 | store 0.3.2 | 3.2 / 1.7 | 37.2 / 21.5 | 1.2 | 0.4, 0.1 |
+| 02 | fork `1cea851` | 3.1 / 1.1 | 14.9 / 6.7 | 0.9 | 0.2, 0.1 |
+| 03 | store 0.3.2 | 2.0 / 0.8 | 33.5 / 19.5 | 1.3 | 0.2, 0.1 |
+| 04 | fork `1cea851` | 2.1 / 0.9 | 10.1 / 4.4 | 0.7 | 0.3, 0.4 |
+
+Mean over the two pairs: during a session the GPU process drops from 20.5% to 5.6% (-73%) and the whole browser from 35.4% to 12.5% (-65%) of one core. After stop, both builds are at baseline within 30 s.
+
+**Owner's in-use browser, store build (before the switch).** Same sequence, in the browser the owner was actively using, so baselines are noisy:
 
 | Run | Build | baseline total / gpu | session total / gpu | post 0-30 s gpu | post 30-60 s gpu | post 60-90 s gpu |
 | --- | --- | --- | --- | --- | --- | --- |
