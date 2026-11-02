@@ -46,6 +46,16 @@ pub const REDACTION_MARKER: &str = "bsk-ctx-redaction-v1";
 #[used]
 static REDACTION_MARKER_BYTES: [u8; 20] = *b"bsk-ctx-redaction-v1";
 
+const _: () = {
+    let (a, b) = (REDACTION_MARKER.as_bytes(), &REDACTION_MARKER_BYTES);
+    assert!(a.len() == b.len());
+    let mut i = 0;
+    while i < a.len() {
+        assert!(a[i] == b[i]);
+        i += 1;
+    }
+};
+
 const OPEN: &str = " [ctx";
 const CTX_KEY: &str = "ctx";
 const REDACTED_SUFFIX: &str = " [ctx: <redacted>]";

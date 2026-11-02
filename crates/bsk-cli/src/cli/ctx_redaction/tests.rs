@@ -116,6 +116,13 @@ fn grouped_codes_are_masked_in_either_case() {
             "{code}"
         );
     }
+    assert_eq!(
+        redact_line(
+            "@e1 button \"Copy\" [ctx: Value q7k2 m9x4 efgh]",
+            Origin::Other
+        ),
+        format!("@e1 button \"Copy\" [ctx: Value {REDACTED} efgh]")
+    );
 }
 
 #[test]
