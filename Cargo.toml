@@ -7,7 +7,7 @@ members = [
 default-members = ["crates/bsk-cli"]
 
 [workspace.package]
-version = "0.3.3"
+version = "0.3.3+ctx1"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
