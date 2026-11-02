@@ -25,14 +25,29 @@ const SITE_URL: &str = "https://example.test/settings";
 enum Tabs {
     Urls(&'static str, &'static str),
     Fails,
+    FailsAfter(&'static str),
 }
 
 struct Run {
     stdout: String,
+    stderr: String,
+    success: bool,
     methods: Vec<String>,
 }
 
 async fn run(command: &[&str], page: &'static str, tabs: Tabs) -> Run {
+    let out = run_with(command, page, tabs, false, 42).await;
+    assert!(out.success, "{}", out.stderr);
+    out
+}
+
+async fn run_with(
+    command: &[&str],
+    page: &'static str,
+    tabs: Tabs,
+    page_fails: bool,
+    reply_tab: i64,
+) -> Run {
     let home = tempfile::tempdir_in("/tmp").unwrap();
     let sock = home.path().join("ipc.sock");
     let listener = UnixListener::bind(&sock).unwrap();
@@ -65,6 +80,20 @@ async fn run(command: &[&str], page: &'static str, tabs: Tabs) -> Run {
                     ("tool.tab_list", Tabs::Fails) => {
                         json!({"error": {"code":"not_found","message":"no such session"}})
                     }
+                    ("tool.tab_list", Tabs::FailsAfter(first)) => {
+                        lists += 1;
+                        if lists == 1 {
+                            json!({"result": {"tabs": [{"tab_id": 42, "url": first, "active": true, "scope": "agent"}]}})
+                        } else {
+                            json!({"error": {"code":"not_found","message":"no such session"}})
+                        }
+                    }
+                    ("tool.snapshot", _) if page_fails => {
+                        let line = page.lines().nth(6).unwrap_or_default();
+                        json!({"error": {"code":"cdp_failed",
+                            "message": format!("render failed near {line}"),
+                            "data": {"partial": line}}})
+                    }
                     ("tool.tab_list", Tabs::Urls(first, later)) => {
                         lists += 1;
                         let url = if lists == 1 { first } else { later };
@@ -74,10 +103,10 @@ async fn run(command: &[&str], page: &'static str, tabs: Tabs) -> Run {
                         ]}})
                     }
                     ("tool.snapshot", _) => {
-                        json!({"result": {"text": page, "ref_count": 9, "tab_id": 42, "truncated": false}})
+                        json!({"result": {"text": page, "ref_count": 9, "tab_id": reply_tab, "truncated": false}})
                     }
                     ("tool.observe", _) => {
-                        json!({"result": {"text": page, "ref_count": 9, "tab_id": 42, "truncated": false}})
+                        json!({"result": {"text": page, "ref_count": 9, "tab_id": reply_tab, "truncated": false}})
                     }
                     _ => panic!("unexpected method: {method}"),
                 };
@@ -106,14 +135,11 @@ async fn run(command: &[&str], page: &'static str, tabs: Tabs) -> Run {
     .unwrap();
     server.abort();
     let _ = server.await;
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
     let methods = methods.lock().unwrap().clone();
     Run {
         stdout: String::from_utf8(out.stdout).unwrap(),
+        stderr: String::from_utf8(out.stderr).unwrap(),
+        success: out.status.success(),
         methods,
     }
 }
@@ -205,4 +231,50 @@ async fn a_continuation_page_cannot_be_tied_to_its_capture_and_is_redacted() {
         "{:?}",
         out.methods
     );
+}
+
+#[tokio::test]
+async fn a_tab_that_enters_the_vault_during_the_call_is_redacted() {
+    let out = run(&["snapshot"], VAULT, Tabs::Urls(SITE_URL, VAULT_URL)).await;
+    assert_all_redacted(&out.stdout);
+}
+
+#[tokio::test]
+async fn a_failing_lookup_after_the_call_is_unknown() {
+    let out = run(&["snapshot"], NORMAL, Tabs::FailsAfter(SITE_URL)).await;
+    assert_all_redacted(&out.stdout);
+}
+
+#[tokio::test]
+async fn error_messages_and_data_are_scrubbed() {
+    for format in [&["snapshot"][..], &["snapshot", "--json"]] {
+        let out = run_with(format, VAULT, Tabs::Urls(SITE_URL, SITE_URL), true, 42).await;
+        assert!(!out.success);
+        let printed = format!("{}{}", out.stdout, out.stderr);
+        assert!(printed.contains("<redacted>"), "{printed}");
+        for secret in [
+            "synthetic.user@example.test",
+            "Zq7-synthetic-Pw-41x",
+            "314 • 159",
+        ] {
+            assert!(
+                !suffixes(&printed).join("\n").contains(secret),
+                "{secret} leaked:\n{printed}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_tab_that_was_rendered_wins_over_the_tab_that_was_asked_for() {
+    let out = run_with(
+        &["snapshot", "--tab-id", "42"],
+        VAULT,
+        Tabs::Urls(SITE_URL, SITE_URL),
+        false,
+        7,
+    )
+    .await;
+    assert!(out.success, "{}", out.stderr);
+    assert_all_redacted(&out.stdout);
 }
