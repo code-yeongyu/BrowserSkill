@@ -42,6 +42,11 @@ fn origins_are_classified_fail_closed() {
         Some("data:text/html,<a href=https://github.com>"),
         Some("about:blank#https://x.test"),
         Some("javascript:location='https://x'"),
+        Some("about://blank"),
+        Some("data://text/html,<p>x"),
+        Some("javascript://x.test/%0aalert(1)"),
+        Some("blob:data://x/"),
+        Some("chrome://settings"),
         Some("garbage"),
     ] {
         assert_eq!(classify_url(url), Origin::Unknown, "{url:?}");
