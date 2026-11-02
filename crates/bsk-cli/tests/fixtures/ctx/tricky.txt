@@ -1,0 +1,9 @@
+@vom 1
+@view 1280x720
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Tricky"
+    section "Board ] [disabled] 271828 31"
+      @e1 button "Open [ctx: decoy]" [ctx: Board ] [disabled] 271828 31]
+    section "Board two"
+      @e2 button "Open [ctx: decoy]" [ctx: Board two]

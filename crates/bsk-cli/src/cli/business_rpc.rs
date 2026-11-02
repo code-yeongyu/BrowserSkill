@@ -26,6 +26,7 @@ use serde::de::DeserializeOwned;
 use tokio::time::{Instant, timeout_at};
 use tracing::debug;
 
+use crate::cli::ctx_redaction;
 use crate::cli::error::CliError;
 use crate::ipc_client::IpcClient;
 
@@ -272,6 +273,13 @@ where
         }
         Err(connect_err) => return Err(connect_err.into()),
     };
+    let fresh = ctx_redaction::fresh_render(&method, params.as_ref());
+    let before = if fresh {
+        Some(ctx_redaction::page_origin(&sock, params.as_ref(), None).await)
+    } else {
+        None
+    };
+    let lookup_params = params.clone();
     let rpc_id_for_call = rpc_id.clone();
     let rpc_id_for_cancel = rpc_id.clone();
     let action_started = std::sync::atomic::AtomicBool::new(false);
@@ -290,7 +298,12 @@ where
         }
         action_started_ref.store(true, std::sync::atomic::Ordering::Relaxed);
         client
-            .call_with_id::<serde_json::Value, R>(rpc_id_for_call, method, params, call_timeout)
+            .call_with_id::<serde_json::Value, serde_json::Value>(
+                rpc_id_for_call,
+                method,
+                params,
+                call_timeout,
+            )
             .await
     };
     tokio::pin!(main_fut);
@@ -347,7 +360,19 @@ where
         res = &mut main_fut => res?,
     };
 
-    outcome.map_err(CliError::from_rpc)
+    let reply = outcome.map_err(|mut error| {
+        if let Some(data) = error.data.as_mut() {
+            ctx_redaction::redact_value(data, ctx_redaction::Origin::Unknown);
+        }
+        error.message =
+            ctx_redaction::redact_text(&error.message, ctx_redaction::Origin::Unknown).into_owned();
+        CliError::from_rpc(error)
+    })?;
+    let reply =
+        ctx_redaction::redact_reply(&sock, fresh, lookup_params.as_ref(), before, reply).await;
+    serde_json::from_value(reply)
+        .context("decode daemon reply")
+        .map_err(CliError::Local)
 }
 
 /// Release caller-owned staging even after cancellation. This deliberately

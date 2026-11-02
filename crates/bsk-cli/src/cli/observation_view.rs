@@ -45,6 +45,9 @@ pub(crate) fn read(path: &Path) -> anyhow::Result<Value> {
         value = value["post"].take();
     }
     ensure!(value.is_object(), "file contains no synchronization reply");
+    // A saved file cannot be tied to the page it came from, and files written
+    // before this guard existed hold raw suffixes.
+    super::ctx_redaction::redact_value(&mut value, super::ctx_redaction::Origin::Unknown);
     Ok(value)
 }
 
