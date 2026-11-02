@@ -27,6 +27,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tracing::debug;
 
+use crate::cli::ctx_redaction;
 use crate::cli::error::CliError;
 use crate::ipc_client::IpcClient;
 
@@ -82,13 +83,30 @@ where
         }));
     }
     let rpc_id: RpcId = format!("{}-{}", rpc_id_prefix, random_short_id());
+    let params = params
+        .map(serde_json::to_value)
+        .transpose()
+        .context("serialise params")
+        .map_err(CliError::Local)?;
+    let fresh = ctx_redaction::fresh_render(&method, params.as_ref());
+    let before = if fresh {
+        Some(ctx_redaction::page_origin(&sock, params.as_ref(), None).await)
+    } else {
+        None
+    };
+    let lookup_params = params.clone();
     let mut client = IpcClient::connect(sock.clone()).await?;
     let rpc_id_for_call = rpc_id.clone();
     let rpc_id_for_cancel = rpc_id.clone();
 
     let main_fut = async move {
         client
-            .call_with_id::<P, R>(rpc_id_for_call, method, params, call_timeout)
+            .call_with_id::<serde_json::Value, serde_json::Value>(
+                rpc_id_for_call,
+                method,
+                params,
+                call_timeout,
+            )
             .await
     };
     tokio::pin!(main_fut);
@@ -117,7 +135,19 @@ where
         }
     };
 
-    outcome.map_err(CliError::from_rpc)
+    let reply = outcome.map_err(|mut error| {
+        if let Some(data) = error.data.as_mut() {
+            ctx_redaction::redact_value(data, ctx_redaction::Origin::Unknown);
+        }
+        error.message =
+            ctx_redaction::redact_text(&error.message, ctx_redaction::Origin::Unknown).into_owned();
+        CliError::from_rpc(error)
+    })?;
+    let reply =
+        ctx_redaction::redact_reply(&sock, fresh, lookup_params.as_ref(), before, reply).await;
+    serde_json::from_value(reply)
+        .context("decode daemon reply")
+        .map_err(CliError::Local)
 }
 
 /// Release caller-owned staging even after cancellation. This deliberately
