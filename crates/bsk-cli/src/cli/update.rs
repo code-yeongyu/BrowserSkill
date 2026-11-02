@@ -45,8 +45,9 @@ pub(crate) const DAEMON_REFRESH_WINDOW: Duration =
     Duration::from_secs(UPDATE_CHECK_INTERVAL.as_secs() * 5 / 6);
 
 /// Environment variable that switches daemon-side auto-upgrade off.
-/// Unset, or any value other than `off` (compared case-insensitively,
-/// surrounding whitespace ignored), keeps auto-upgrade on.
+/// This fork carries a security patch upstream lacks, so an upgrade to an
+/// upstream build would silently drop it: auto-upgrade is OFF unless the value
+/// is `on` (compared case-insensitively, surrounding whitespace ignored).
 pub(crate) const AUTO_UPDATE_ENV: &str = "BSK_AUTO_UPDATE";
 
 #[derive(Debug, Clone)]
@@ -674,8 +675,8 @@ fn manifest_url() -> String {
     std::env::var("BSK_UPDATE_MANIFEST_URL").unwrap_or_else(|_| DEFAULT_MANIFEST_URL.to_string())
 }
 
-/// Whether daemon-side auto-upgrade is enabled. On by default; only
-/// [`AUTO_UPDATE_ENV`]`=off` disables it. This is the single place the
+/// Whether daemon-side auto-upgrade is enabled. Off by default in this fork;
+/// only [`AUTO_UPDATE_ENV`]`=on` enables it. This is the single place the
 /// switch is interpreted — the daemon periodic task and the CLI hint
 /// both go through it so they always agree.
 pub(crate) fn auto_update_enabled() -> bool {
@@ -683,7 +684,7 @@ pub(crate) fn auto_update_enabled() -> bool {
 }
 
 fn auto_update_enabled_from(value: Option<&str>) -> bool {
-    !matches!(value, Some(value) if value.trim().eq_ignore_ascii_case("off"))
+    matches!(value, Some(value) if value.trim().eq_ignore_ascii_case("on"))
 }
 
 pub fn update_hint_for_manifest(
@@ -2007,11 +2008,12 @@ mod tests {
     }
 
     #[test]
-    fn auto_update_toggle_defaults_on_and_only_off_disables() {
-        assert!(auto_update_enabled_from(None));
+    fn auto_update_toggle_defaults_off_in_the_fork_and_only_on_enables() {
+        assert!(!auto_update_enabled_from(None));
         assert!(auto_update_enabled_from(Some("on")));
-        assert!(auto_update_enabled_from(Some("1")));
-        assert!(auto_update_enabled_from(Some("")));
+        assert!(auto_update_enabled_from(Some(" ON ")));
+        assert!(!auto_update_enabled_from(Some("1")));
+        assert!(!auto_update_enabled_from(Some("")));
         assert!(!auto_update_enabled_from(Some("off")));
         assert!(!auto_update_enabled_from(Some("OFF")));
         assert!(!auto_update_enabled_from(Some("  Off  ")));
