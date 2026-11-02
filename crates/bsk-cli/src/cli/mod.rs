@@ -8,6 +8,7 @@ pub mod browsers;
 pub mod business_rpc;
 pub mod console;
 pub mod cooperate;
+pub mod ctx_redaction;
 pub mod daemon;
 pub mod debug;
 pub mod dialog_control;

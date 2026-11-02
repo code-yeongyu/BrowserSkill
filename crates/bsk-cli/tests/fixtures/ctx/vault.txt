@@ -1,0 +1,20 @@
+@vom 1
+@view 1280x720
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Synthetic Personal"
+    group "username synthetic.user@example.test"
+      @e1 button "Copy" [ctx: username synthetic.user@example.test]
+      @e2 button "Reveal" [ctx: username synthetic.user@example.test]
+    group "password Zq7-synthetic-Pw-41x"
+      @e3 button "Copy" [ctx: password Zq7-synthetic-Pw-41x]
+      @e4 button "Reveal" [ctx: password Zq7-synthetic-Pw-41x]
+    group "one-time password 314 • 159 26"
+      @e5 button "Copy" [ctx: one-time password 314 • 159 26]
+      @e6 button "Reveal" [ctx: one-time password 314 • 159 26]
+    group "Pass Key Recovery Code SYNTH-ABCD-2345-EFGH-6789"
+      @e7 button "Copy" [ctx: Pass Key Recovery Code SYNTH-ABCD-2345-EFGH-6789]
+      @e8 button "Reveal" [ctx: Pass Key Recovery Code SYNTH-ABCD-2345-EFGH-6789]
+    group "notes door 0123 456"
+      @e9 button "Copy" [ctx: notes door 0123 456]
+      @e10 button "Reveal" [ctx: notes door 0123 456]
