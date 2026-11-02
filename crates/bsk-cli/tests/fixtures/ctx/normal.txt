@@ -1,0 +1,9 @@
+@vom 1
+@view 1280x720
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Admin"
+    section "Project Alpha"
+      @e1 button "View" [ctx: Project Alpha]
+    section "Project Beta"
+      @e2 button "View" [ctx: Project Beta]

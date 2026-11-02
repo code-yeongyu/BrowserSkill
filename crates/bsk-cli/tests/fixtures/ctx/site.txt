@@ -1,0 +1,29 @@
+@vom 1
+@view 1280x720
+@layers 1 focus=L1
+L1 page
+  RootWebArea "Account settings"
+    group "Verification code 271 828"
+      @e1 button "Copy" [ctx: Verification code 271 828]
+      @e2 button "Reveal" [ctx: Verification code 271 828]
+    group "Recovery codes q7k2-m9x4 p3v8-w6z1"
+      @e3 button "Copy" [ctx: Recovery codes q7k2-m9x4 p3v8-w6z1]
+      @e4 button "Reveal" [ctx: Recovery codes q7k2-m9x4 p3v8-w6z1]
+    group "Reference 314 159 26"
+      @e5 button "Copy" [ctx: Reference 314 159 26]
+      @e6 button "Reveal" [ctx: Reference 314 159 26]
+    group "Owner synthetic.user@example.test"
+      @e7 button "Copy" [ctx: Owner synthetic.user@example.test]
+      @e8 button "Reveal" [ctx: Owner synthetic.user@example.test]
+    group "Deploy key id a1b2c3d4e5f6a7b8c9d0e1f2"
+      @e9 button "Copy" [ctx: Deploy key id a1b2c3d4e5f6a7b8c9d0e1f2]
+      @e10 button "Reveal" [ctx: Deploy key id a1b2c3d4e5f6a7b8c9d0e1f2]
+    group "Seed JBSW Y3DP EHPK 3PXP"
+      @e11 button "Copy" [ctx: Seed JBSW Y3DP EHPK 3PXP]
+      @e12 button "Reveal" [ctx: Seed JBSW Y3DP EHPK 3PXP]
+    group "Project Alpha Q3 roadmap"
+      @e13 button "Copy" [ctx: Project Alpha Q3 roadmap]
+      @e14 button "Reveal" [ctx: Project Alpha Q3 roadmap]
+    group "Project Beta launch 2026"
+      @e15 button "Copy" [ctx: Project Beta launch 2026]
+      @e16 button "Reveal" [ctx: Project Beta launch 2026]
