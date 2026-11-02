@@ -185,7 +185,8 @@ enum GroupKind {
 
 /// Grouped secrets separated by single spaces or dashes: four or more
 /// base32/hex groups of which at least two hold a digit (`JBSW Y3DP EHPK 3PXP`,
-/// either case), or two or more letter+digit groups (`q7k2-m9x4`).
+/// either case), or two or more consecutive letter+digit groups (`q7k2-m9x4`).
+/// Each chain of groups is scanned once, so the scan stays linear.
 fn mark_grouped_codes(chars: &[char], hidden: &mut [bool]) {
     let mut index = 0;
     while index < chars.len() {
@@ -195,41 +196,61 @@ fn mark_grouped_codes(chars: &[char], hidden: &mut [bool]) {
             index += 1;
             continue;
         }
-        let start = index;
-        let mut groups: Vec<GroupKind> = Vec::new();
-        let mut end = index;
-        let mut cursor = index;
-        loop {
-            let group_start = cursor;
-            while cursor < chars.len() && chars[cursor].is_ascii_alphanumeric() {
-                cursor += 1;
+        let groups = chain_at(chars, index);
+        let Some(chain_end) = groups.last().map(|g| g.end) else {
+            index += 1;
+            continue;
+        };
+        let digit_groups = groups.iter().filter(|g| g.has_digit).count();
+        if groups.len() >= 4 && digit_groups >= 2 {
+            hidden[groups[0].start..chain_end]
+                .iter_mut()
+                .for_each(|h| *h = true);
+        } else {
+            for run in groups.split(|g| g.kind != GroupKind::Mixed) {
+                if let [first, .., last] = run {
+                    hidden[first.start..last.end]
+                        .iter_mut()
+                        .for_each(|h| *h = true);
+                }
             }
-            let Some(kind) = group_kind(&chars[group_start..cursor]) else {
-                break;
-            };
-            groups.push(kind);
-            end = cursor;
-            let separated = cursor + 1 < chars.len()
-                && matches!(chars[cursor], ' ' | '-')
-                && chars[cursor + 1].is_ascii_alphanumeric();
-            if !separated {
-                break;
-            }
+        }
+        index = chain_end;
+    }
+}
+
+struct Group {
+    start: usize,
+    end: usize,
+    kind: GroupKind,
+    has_digit: bool,
+}
+
+fn chain_at(chars: &[char], start: usize) -> Vec<Group> {
+    let mut groups = Vec::new();
+    let mut cursor = start;
+    loop {
+        let group_start = cursor;
+        while cursor < chars.len() && chars[cursor].is_ascii_alphanumeric() {
             cursor += 1;
         }
-        let run = &chars[start..end];
-        let mixed_groups = groups.iter().filter(|k| **k == GroupKind::Mixed).count();
-        let digit_groups = run
-            .split(|c| matches!(c, ' ' | '-'))
-            .filter(|group| group.iter().any(char::is_ascii_digit))
-            .count();
-        let encoded = groups.len() >= 4 && digit_groups >= 2;
-        let mixed = groups.len() >= 2 && mixed_groups == groups.len();
-        if encoded || mixed {
-            hidden[start..end].iter_mut().for_each(|h| *h = true);
-            index = end;
-        } else {
-            index += 1;
+        let group = &chars[group_start..cursor];
+        let Some(kind) = group_kind(group) else {
+            break;
+        };
+        groups.push(Group {
+            start: group_start,
+            end: cursor,
+            kind,
+            has_digit: group.iter().any(char::is_ascii_digit),
+        });
+        let separated = cursor + 1 < chars.len()
+            && matches!(chars[cursor], ' ' | '-')
+            && chars[cursor + 1].is_ascii_alphanumeric();
+        if !separated {
+            break;
         }
+        cursor += 1;
     }
+    groups
 }

@@ -131,6 +131,11 @@ fn secret_labels_redact_the_suffix_on_any_origin() {
         "복구 코드",
         "패스워드",
         "验证码",
+        "API 키",
+        "비밀키",
+        "api_key",
+        "access-key",
+        "card_number",
     ] {
         let line = format!("@e1 button \"Copy\" [ctx: {label} xyz]");
         assert_eq!(
@@ -151,6 +156,12 @@ fn redaction_keeps_the_fixed_markers_after_the_suffix() {
     assert_eq!(
         redact_line(masked, Origin::Other),
         format!("@e2 textbox \"Field\"{REDACTED_SUFFIX} [filled] =\"•••\"")
+    );
+    let hover =
+        "@e4 textbox \"Field\" [ctx: Alice 1234] [filled] =\"•••\" [hover first: Show | Copy]";
+    assert_eq!(
+        redact_line(hover, Origin::Other),
+        format!("@e4 textbox \"Field\"{REDACTED_SUFFIX}")
     );
     let free_text = "@e3 link \"Docs\" [ctx: Area] [→ https://example.test/a] [checked]";
     assert_eq!(

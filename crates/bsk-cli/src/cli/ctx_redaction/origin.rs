@@ -37,15 +37,31 @@ const ONEPASSWORD_EXTENSION_IDS: &[&str] = &[
     "khgocmkkpikpnmmkgmdnfckapcdkgfaf",
 ];
 
-/// Classify a tab URL. Anything that cannot be parsed as `scheme://host...`
-/// is `Unknown`, never `Other`.
+/// Classify a tab URL. `blob:`/`filesystem:` resolve to their inner origin;
+/// anything that is not a well-formed `scheme://host...` is `Unknown`, never
+/// `Other` (`data:`, `about:`, `javascript:` and the like).
 pub fn classify_url(url: Option<&str>) -> Origin {
     let Some(url) = url.map(str::trim).filter(|u| !u.is_empty()) else {
         return Origin::Unknown;
     };
-    let Some((scheme, rest)) = url.split_once("://") else {
+    let lower = url.to_ascii_lowercase();
+    let inner = ["blob:", "filesystem:"]
+        .iter()
+        .find_map(|prefix| lower.strip_prefix(prefix))
+        .unwrap_or(&lower);
+    let Some((scheme, rest)) = inner.split_once("://") else {
         return Origin::Unknown;
     };
+    let well_formed = scheme
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'));
+    if !well_formed {
+        return Origin::Unknown;
+    }
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
     let host_port = authority.rsplit('@').next().unwrap_or_default();
     let host = host_port
@@ -53,11 +69,10 @@ pub fn classify_url(url: Option<&str>) -> Origin {
         .next()
         .unwrap_or_default()
         .trim_end_matches('.')
-        .to_ascii_lowercase();
+        .to_owned();
     if host.is_empty() {
         return Origin::Unknown;
     }
-    let scheme = scheme.to_ascii_lowercase();
     if scheme == "chrome-extension" {
         return if ONEPASSWORD_EXTENSION_IDS.contains(&host.as_str()) {
             Origin::PasswordManager
