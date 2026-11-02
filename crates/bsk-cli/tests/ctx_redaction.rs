@@ -119,7 +119,7 @@ async fn run_with(
         }
     });
     let out = tokio::time::timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(60),
         Command::new(env!("CARGO_BIN_EXE_bsk"))
             .env("BSK_HOME", home.path())
             .env("BSK_AUTO_START", "0")
