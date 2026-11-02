@@ -916,8 +916,8 @@ pub(crate) fn spawn_session_idle_reaper(state: Arc<DaemonState>) -> tokio::task:
 /// update client's own timeout and detached on abort).
 ///
 /// When a tick finds a newer version a detached daemon also *installs* it
-/// (auto-update, on by default; [`crate::cli::update::AUTO_UPDATE_ENV`]
-/// `=off` disables it and keeps the check cache/hint-only). A daemon owned
+/// (auto-update, off by default in this fork; [`crate::cli::update::AUTO_UPDATE_ENV`]
+/// `=on` enables it, otherwise the check stays cache/hint-only). A daemon owned
 /// by a terminal or supervisor only reports the version, since nothing but
 /// its owner can restart it. Safety gate: while any agent session is live
 /// the tick postpones the install and retries next time. Once the new

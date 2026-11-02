@@ -43,6 +43,9 @@ pub use page::{fresh_render, page_origin};
 /// `bsk --version` (version guards parse that line).
 pub const REDACTION_MARKER: &str = "bsk-ctx-redaction-v1";
 
+#[used]
+static REDACTION_MARKER_BYTES: [u8; 20] = *b"bsk-ctx-redaction-v1";
+
 const OPEN: &str = " [ctx";
 const CTX_KEY: &str = "ctx";
 const REDACTED_SUFFIX: &str = " [ctx: <redacted>]";
@@ -167,7 +170,7 @@ fn redact_line(line: &str, origin: Origin) -> Cow<'_, str> {
     if origin.redacts_all()
         || names_secret(head)
         || names_secret(suffix)
-        || kept.contains(SENSITIVE_VALUE)
+        || rest.contains(SENSITIVE_VALUE)
     {
         return Cow::Owned(format!("{head}{REDACTED_SUFFIX}{kept}"));
     }
