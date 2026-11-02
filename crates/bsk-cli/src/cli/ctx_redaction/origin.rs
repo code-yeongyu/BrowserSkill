@@ -38,8 +38,9 @@ const ONEPASSWORD_EXTENSION_IDS: &[&str] = &[
 ];
 
 /// Classify a tab URL. `blob:`/`filesystem:` resolve to their inner origin;
-/// anything that is not a well-formed `scheme://host...` is `Unknown`, never
-/// `Other` (`data:`, `about:`, `javascript:` and the like).
+/// only `http`, `https` and `chrome-extension` URLs with a host can be judged,
+/// everything else (`data:`, `about:`, `javascript:`, `chrome:`, `ftp:`, ...)
+/// is `Unknown`, never `Other`.
 pub fn classify_url(url: Option<&str>) -> Origin {
     let Some(url) = url.map(str::trim).filter(|u| !u.is_empty()) else {
         return Origin::Unknown;
@@ -59,7 +60,7 @@ pub fn classify_url(url: Option<&str>) -> Origin {
         && scheme
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'));
-    if !well_formed {
+    if !well_formed || !matches!(scheme, "http" | "https" | "chrome-extension") {
         return Origin::Unknown;
     }
     let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
