@@ -66,12 +66,26 @@ const SECRET_SUBSTRINGS: &[&str] = &[
     "令牌",
     "安全码",
     "暗証番号",
+    "api 키",
+    "api키",
+    "비밀 키",
+    "비밀키",
+    "액세스 키",
+    "개인 키",
+    "개인키",
 ];
 
+/// `_` and `-` count as spaces on both sides, so `api_key`, `access-key` and
+/// `one time` match the same terms as `api key` and `one-time`.
 pub(super) fn names_secret(text: &str) -> bool {
     let lower = text.to_lowercase();
-    SECRET_SUBSTRINGS.iter().any(|term| lower.contains(term))
-        || SECRET_WORDS.iter().any(|term| has_word(&lower, term))
+    let spaced = lower.replace(['_', '-'], " ");
+    SECRET_SUBSTRINGS
+        .iter()
+        .any(|term| lower.contains(term) || spaced.contains(term))
+        || SECRET_WORDS
+            .iter()
+            .any(|term| has_word(&spaced, &term.replace(['_', '-'], " ")))
 }
 
 fn has_word(text: &str, term: &str) -> bool {

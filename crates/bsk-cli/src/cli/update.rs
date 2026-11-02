@@ -595,7 +595,7 @@ pub(crate) fn download_candidate_binary(
 pub(crate) enum AutoUpdatePolicy {
     /// Install it, then hand over to a replacement daemon.
     Install,
-    /// [`AUTO_UPDATE_ENV`]`=off`: only refresh the cache behind the CLI hint.
+    /// [`AUTO_UPDATE_ENV`] is not `on` (the fork default): only refresh the cache behind the CLI hint.
     Disabled,
     /// A terminal or supervisor owns this daemon (`--foreground`). Only that
     /// owner can restart it, so leave the upgrade to `bsk update`.
