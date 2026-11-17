@@ -240,6 +240,13 @@ where
             .get()
             .and_then(|(_, expect)| expect.as_ref()),
     )?;
+    let fresh = ctx_redaction::fresh_render(&method, params.as_ref());
+    let before = if fresh {
+        Some(ctx_redaction::page_origin(&sock, params.as_ref(), None).await)
+    } else {
+        None
+    };
+    let lookup_params = params.clone();
     let mut prechecked = super::protocol::precheck_cached_daemon_support(
         &sock,
         &method,
@@ -273,13 +280,6 @@ where
         }
         Err(connect_err) => return Err(connect_err.into()),
     };
-    let fresh = ctx_redaction::fresh_render(&method, params.as_ref());
-    let before = if fresh {
-        Some(ctx_redaction::page_origin(&sock, params.as_ref(), None).await)
-    } else {
-        None
-    };
-    let lookup_params = params.clone();
     let rpc_id_for_call = rpc_id.clone();
     let rpc_id_for_cancel = rpc_id.clone();
     let action_started = std::sync::atomic::AtomicBool::new(false);

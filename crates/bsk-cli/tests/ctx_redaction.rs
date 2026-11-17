@@ -73,7 +73,7 @@ async fn run_with(
                 seen.lock().unwrap().push(method.clone());
                 let reply = match (method.as_str(), tabs) {
                     ("system.status", _) => {
-                        json!({"result": {"daemon_version":"0.4.0","protocol_version":"1.7",
+                        json!({"result": {"daemon_version":"0.5.0","protocol_version":"1.9",
                         "pid":std::process::id(),"uptime_secs":0,"ws_port":0,"sock_path":sock,
                         "browsers":[],"sessions":[]}})
                     }
@@ -114,7 +114,10 @@ async fn run_with(
                 frame["id"] = request["id"].clone();
                 let mut bytes = serde_json::to_vec(&frame).unwrap();
                 bytes.push(b'\n');
-                write.write_all(&bytes).await.unwrap();
+                // A 0.5 CLI may hang up a probe connection before reading its reply.
+                if write.write_all(&bytes).await.is_err() {
+                    break;
+                }
             }
         }
     });
