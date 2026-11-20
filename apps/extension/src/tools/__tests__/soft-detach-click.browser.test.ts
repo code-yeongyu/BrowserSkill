@@ -545,7 +545,9 @@ describe.skipIf(!process.env.BSK_CLICK_CHROME)(
             onEvent: (event: CdpEvent) => forwardEvent?.(event),
           },
           async (send: Send) => {
-            const { targetId } = await send<{ targetId: string }>("Target.createTarget", { url });
+            const { targetId } = await send<{ targetId: string }>("Target.createTarget", {
+              url: "about:blank",
+            });
             const { sessionId: monitorSession } = await send<{ sessionId: string }>(
               "Target.attachToTarget",
               { targetId, flatten: true },
@@ -553,11 +555,56 @@ describe.skipIf(!process.env.BSK_CLICK_CHROME)(
 
             let activeRootSession = "";
             const eventListeners = new Set<CdpEventListener>();
+            const loadedDocuments = new Set<string>();
+            const fixtureLoaded = Promise.withResolvers<void>();
+            let expectedLoad: string | undefined;
             forwardEvent = (event) => {
+              const params = event.params;
+              if (
+                event.sessionId === monitorSession &&
+                event.method === "Page.lifecycleEvent" &&
+                params &&
+                "name" in params &&
+                params.name === "load" &&
+                "frameId" in params &&
+                typeof params.frameId === "string" &&
+                "loaderId" in params &&
+                typeof params.loaderId === "string"
+              ) {
+                const document = `${params.frameId}:${params.loaderId}`;
+                if (document === expectedLoad) fixtureLoaded.resolve();
+                else if (!expectedLoad) loadedDocuments.add(document);
+              }
               if (activeRootSession && event.sessionId === activeRootSession) {
                 for (const fn of [...eventListeners]) fn({ tabId: 8 }, event.method, event.params);
               }
             };
+            // Target.createTarget returns before its URL has loaded. Capture only after the
+            // new loader's load event, not while the initial about:blank is being replaced.
+            await send("Page.enable", {}, monitorSession);
+            await send("Page.setLifecycleEventsEnabled", { enabled: true }, monitorSession);
+            const navigation = await send<{
+              frameId: string;
+              loaderId?: string;
+              errorText?: string;
+            }>("Page.navigate", { url }, monitorSession);
+            if (!navigation.loaderId || navigation.errorText) {
+              throw new Error(`Fixture navigation did not start: ${JSON.stringify(navigation)}`);
+            }
+            expectedLoad = `${navigation.frameId}:${navigation.loaderId}`;
+            if (!loadedDocuments.has(expectedLoad)) {
+              const deadline = setTimeout(
+                () => fixtureLoaded.reject(new Error("Fixture document did not finish loading")),
+                15_000,
+              );
+              try {
+                await fixtureLoaded.promise;
+              } finally {
+                clearTimeout(deadline);
+              }
+            }
+            await send("Page.setLifecycleEventsEnabled", { enabled: false }, monitorSession);
+
             const api: CdpDebuggerApi = {
               attach: async () => {
                 const reply = await send<{ sessionId: string }>("Target.attachToTarget", {
