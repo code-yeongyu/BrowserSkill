@@ -833,6 +833,13 @@ async fn strict_policy_delta_sync_and_open_wait_committed_effect_state() {
             "final_url": "https://app.test/form",
             "reached": "load"
         })),
+        Method::ToolTabList => {
+            let params = req.params.as_ref().unwrap();
+            assert_eq!(params["scope"], "all");
+            ResponseBody::Ok(json!({
+                "tabs": [{"tab_id":7,"scope":"agent","active":true,"url":"https://app.test/form"}]
+            }))
+        }
         Method::ToolSnapshot => {
             *promote_next_ext.lock().unwrap() = true;
             ResponseBody::Ok(json!({
@@ -984,6 +991,7 @@ async fn strict_policy_delta_sync_and_open_wait_committed_effect_state() {
         promoted_reqs,
         vec![
             Method::ToolCooperate,
+            Method::ToolTabList, // ctx1 checks origin before the fresh snapshot.
             Method::ToolSnapshot,
             Method::ToolCooperate,
         ]
