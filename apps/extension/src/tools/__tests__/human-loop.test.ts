@@ -1236,7 +1236,78 @@ describe("handleRequestHelp", () => {
     });
   });
 
+  it.each([
+    { deniedMethod: "DOM.getDocument", selector: "#login", matched: true },
+    { deniedMethod: "DOM.querySelector", selector: "#login", matched: true },
+    { deniedMethod: "DOM.getDocument", selector: "#unknown", matched: false },
+  ])("completes from the top frame when $deniedMethod is denied ($selector)", async ({
+    deniedMethod,
+    selector,
+    matched,
+  }) => {
+    const fixture = document.createElement("div");
+    // Happy DOM cannot load extension URLs; CDP denial is simulated below.
+    fixture.innerHTML = `<form id="login"></form><p id="done">Signed in</p>
+        <iframe src="chrome-extension://foreign-extension/menu.html" srcdoc=""></iframe>`;
+    const frame = fixture.querySelector("iframe");
+    document.body.append(fixture);
+    const executeScript = vi.fn(
+      async (injection: chrome.scripting.ScriptInjection<unknown[], unknown>) => {
+        const { target, world } = injection;
+        if (
+          target.tabId !== 5 ||
+          target.frameIds?.join() !== "0" ||
+          world !== "MAIN" ||
+          !("func" in injection)
+        ) {
+          throw new Error("expected a top-frame main-world injection");
+        }
+        const args = "args" in injection ? injection.args : [];
+        return [{ frameId: 0, result: injection.func(...args) }];
+      },
+    );
+    vi.stubGlobal("chrome", { scripting: { executeScript } });
+    const deps = baseDeps({
+      cdp: {
+        send: vi.fn(async (_tabId: number, method: string) => {
+          if (method === deniedMethod || method === "Runtime.evaluate") {
+            throw new Error("Cannot access a chrome-extension:// URL of different extension");
+          }
+          if (method === "DOM.getDocument") return { root: { nodeId: 1 } };
+          throw new Error(`unexpected CDP method: ${method}`);
+        }),
+      } as unknown as RequestHelpDeps["cdp"],
+      sendToTab: vi.fn(async () => ({ type: "bsk-help-ack", ok: true })),
+    });
+    try {
+      const result = await handleRequestHelp(
+        fakeManager("abcd", 99, 5),
+        baseParams({
+          tab_id: 5,
+          targets: [{ selector }],
+          completion_criteria: {
+            all: [{ selector_exists: "#done", text_exists: "Signed in" }],
+            stable_for_ms: 0,
+          },
+          timeout_ms: 50,
+        }),
+        deps,
+      );
+      expect(result).toMatchObject({
+        outcome: "completed",
+        completed_by: "system",
+        resolved_targets: [{ matched, selector }],
+      });
+      expect(fixture.querySelector("iframe")).toBe(frame);
+      expect(frame?.getAttribute("src")).toBe("chrome-extension://foreign-extension/menu.html");
+    } finally {
+      fixture.remove();
+    }
+  });
+
   it("marks selector unmatched when CDP cannot resolve the document root", async () => {
+    const executeScript = vi.fn();
+    vi.stubGlobal("chrome", { scripting: { executeScript } });
     const deps = baseDeps({
       cdp: {
         send: vi.fn(async (_tabId: number, method: string) => {
@@ -1253,6 +1324,7 @@ describe("handleRequestHelp", () => {
     expect(res).toMatchObject({
       resolved_targets: [{ matched: false, selector: "#x" }],
     });
+    expect(executeScript).not.toHaveBeenCalled();
   });
 
   it("returns cancelled when the signal aborts", async () => {

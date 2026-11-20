@@ -28,6 +28,7 @@ import type {
   ResolvedTarget,
   RpcError,
 } from "@/transport/types";
+import { isCdpExtensionAccessDenied } from "./errors";
 import { resolveNodeGeometry } from "./frame-geometry";
 import {
   type CdpRunner,
@@ -187,6 +188,28 @@ async function sendHelpRequestWithAck(
   throw lastError ?? new Error("failed to show help overlay");
 }
 
+async function checkTopFrame<Args extends unknown[]>(
+  tabId: number,
+  func: (...args: Args) => boolean,
+  args: Args,
+): Promise<boolean> {
+  try {
+    const [top] = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      world: "MAIN",
+      func,
+      args,
+    });
+    return top?.result === true;
+  } catch {
+    return false;
+  }
+}
+
+function topFrameSelectorExists(selector: string): boolean {
+  return document.querySelector(selector) !== null;
+}
+
 async function selectorExists(
   cdp: CdpRunner,
   tabId: number,
@@ -199,8 +222,9 @@ async function selectorExists(
       selector,
     });
     return typeof res.nodeId === "number" && res.nodeId !== 0;
-  } catch {
-    return false;
+  } catch (error) {
+    if (!isCdpExtensionAccessDenied(error)) return false;
+    return checkTopFrame(tabId, topFrameSelectorExists, [selector]);
   }
 }
 
@@ -219,14 +243,15 @@ async function resolveHelpTargets(
   const rects: HelpHighlightRect[] = [];
   const resolved: ResolvedTarget[] = [];
   let rootNodeId: number | undefined;
+  let cdpAccessDenied = false;
   if (deps.cdp && targets.some((target) => Boolean(target.selector))) {
     try {
       const doc = await deps.cdp.send<{ root?: { nodeId?: number } }>(tabId, "DOM.getDocument", {
         depth: 0,
       });
       rootNodeId = doc.root?.nodeId;
-    } catch {
-      rootNodeId = undefined;
+    } catch (error) {
+      cdpAccessDenied = isCdpExtensionAccessDenied(error);
     }
   }
 
@@ -234,12 +259,12 @@ async function resolveHelpTargets(
     const tgt = targets[i];
     if (tgt.selector) {
       selectors.push(tgt.selector);
-      const matched =
-        deps.cdp && rootNodeId !== undefined
-          ? await selectorExists(deps.cdp, tabId, rootNodeId, tgt.selector)
-          : deps.cdp
-            ? false
-            : true;
+      let matched = !deps.cdp;
+      if (cdpAccessDenied) {
+        matched = await checkTopFrame(tabId, topFrameSelectorExists, [tgt.selector]);
+      } else if (deps.cdp && rootNodeId !== undefined) {
+        matched = await selectorExists(deps.cdp, tabId, rootNodeId, tgt.selector);
+      }
       resolved.push({ matched, selector: tgt.selector });
     } else if (tgt.ref) {
       const looked = ctx ? lookupSnapshotRef(ctx, tgt.ref, tabId) : null;
@@ -592,6 +617,20 @@ function attachHelpNavigationListener(deps: RequestHelpDeps): () => void {
   return () => chrome.tabs.onUpdated?.removeListener(listener);
 }
 
+function matchesDomCompletionCondition({
+  selector_exists,
+  selector_missing,
+  text_exists,
+  text_missing,
+}: HelpCompletionCondition): boolean {
+  if (selector_exists && !document.querySelector(selector_exists)) return false;
+  if (selector_missing && document.querySelector(selector_missing)) return false;
+  const text = document.body ? document.body.innerText || "" : "";
+  if (text_exists && !text.includes(text_exists)) return false;
+  if (text_missing && text.includes(text_missing)) return false;
+  return true;
+}
+
 async function evaluateCompletionCondition(
   condition: HelpCompletionCondition,
   help: ActiveHelpRequest,
@@ -611,25 +650,11 @@ async function evaluateCompletionCondition(
     }
   }
 
-  if (
-    condition.selector_exists ||
-    condition.selector_missing ||
-    condition.text_exists ||
-    condition.text_missing
-  ) {
+  const { selector_exists, selector_missing, text_exists, text_missing } = condition;
+  if (selector_exists || selector_missing || text_exists || text_missing) {
     if (!help.deps.cdp) return false;
-    const expression = `(() => {
-      const selectorExists = ${JSON.stringify(condition.selector_exists ?? null)};
-      const selectorMissing = ${JSON.stringify(condition.selector_missing ?? null)};
-      const textExists = ${JSON.stringify(condition.text_exists ?? null)};
-      const textMissing = ${JSON.stringify(condition.text_missing ?? null)};
-      if (selectorExists && !document.querySelector(selectorExists)) return false;
-      if (selectorMissing && document.querySelector(selectorMissing)) return false;
-      const text = document.body ? document.body.innerText || "" : "";
-      if (textExists && !text.includes(textExists)) return false;
-      if (textMissing && text.includes(textMissing)) return false;
-      return true;
-    })()`;
+    const domCondition = { selector_exists, selector_missing, text_exists, text_missing };
+    const expression = `(${matchesDomCompletionCondition.toString()})(${JSON.stringify(domCondition)})`;
     try {
       const result = await help.deps.cdp.send<{ result?: { value?: boolean } }>(
         help.primaryTabId,
@@ -637,8 +662,9 @@ async function evaluateCompletionCondition(
         { expression, returnByValue: true },
       );
       if (result.result?.value !== true) return false;
-    } catch {
-      return false;
+    } catch (error) {
+      if (!isCdpExtensionAccessDenied(error) || help.settled) return false;
+      return checkTopFrame(help.primaryTabId, matchesDomCompletionCondition, [domCondition]);
     }
   }
 
