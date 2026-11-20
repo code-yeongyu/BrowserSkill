@@ -57,6 +57,12 @@
     }
   },
   "properties": {
+    "accept_dom_dispatch": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "clear_before": {
       "description": "Clear the field before typing. Defaults to `true`; pass `false`\nto append instead of replacing.",
       "type": [
@@ -110,6 +116,12 @@
       "format": "int64",
       "type": [
         "integer",
+        "null"
+      ]
+    },
+    "target_document_id": {
+      "type": [
+        "string",
         "null"
       ]
     },

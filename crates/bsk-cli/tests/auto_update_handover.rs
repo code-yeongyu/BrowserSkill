@@ -591,7 +591,8 @@ fn l11b_revocation_during_auto_update_survives_process_handover() {
 
     let revoked = fixture
         .command()
-        .args(["daemon", "revoke", &id])
+        // A base64url device ID can start with `-`; pass it as a positional value.
+        .args(["daemon", "revoke", "--", &id])
         .output()
         .unwrap();
     assert!(

@@ -131,6 +131,7 @@ struct ScopeSlot {
 #[derive(Debug, Default, Clone)]
 struct TabContextCache {
     latest_ctx_id: Option<String>,
+    top_frame_dom: bool,
     latest_short_ctx: Option<String>,
     latest_obs_id: Option<String>,
     latest_short_obs: Option<String>,
@@ -372,6 +373,18 @@ impl ImplicitScopeRegistry {
         guard.sessions.get(session_id)?.active_tab_id
     }
 
+    /// A synthetic intent must use the same tab as its explicit renderer context, even
+    /// when another tab became active after the observation was published.
+    pub fn top_frame_context_tab(&self, session_id: &SessionId, context_id: &str) -> Option<i64> {
+        let guard = self.inner.lock().ok()?;
+        let slot = guard.sessions.get(session_id)?;
+        let mut matches = slot.tabs.iter().filter(|(_, tab)| {
+            tab.top_frame_dom && tab.latest_ctx_id.as_deref() == Some(context_id)
+        });
+        let (tab_id, _) = matches.next()?;
+        matches.next().is_none().then_some(*tab_id)
+    }
+
     /// Return the latest reusable `context_id` for the target tab ONLY when the
     /// session's negotiated cooperation policy is `target`. Never injects another
     /// tab's context when `tab_id` is omitted after tab switches/creation/closure.
@@ -541,6 +554,7 @@ impl ImplicitScopeRegistry {
                 if let Some((ref short, ref uuid)) = minted_ctx {
                     tab_cache.latest_short_ctx = Some(short.clone());
                     tab_cache.latest_ctx_id = Some(uuid.clone());
+                    tab_cache.top_frame_dom = result["backend"] == "top_frame_dom";
                 }
                 if let Some((ref short, ref uuid)) = minted_obs {
                     tab_cache.latest_short_obs = Some(short.clone());

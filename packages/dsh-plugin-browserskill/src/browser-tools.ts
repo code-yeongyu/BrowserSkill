@@ -229,6 +229,10 @@ const BROWSER_TOOL_SPECS: BrowserToolSpec[] = [
           "Sync: bounded read-only recovery from transient refusals; never repeats an action.",
       },
       maxTokens: { type: "integer", description: "Sync observation token cap." },
+      allowTopFrameDom: {
+        type: "boolean",
+        description: "Sync only: opt into synthetic top-frame control on a debugger denial.",
+      },
       url: { type: "string", description: "Initial URL for start." },
       width: { type: "integer", description: "Agent Window width; start requires height too." },
       height: { type: "integer", description: "Agent Window height; start requires width too." },
@@ -376,6 +380,10 @@ const BROWSER_TOOL_SPECS: BrowserToolSpec[] = [
       },
       value: { type: "string", description: "Text for fill." },
       noClear: { type: "boolean", description: "Append instead of clearing for fill." },
+      acceptDomDispatch: {
+        type: "boolean",
+        description: "Fill or click: accept synthetic dispatch for an explicit top-frame context.",
+      },
       modifiers: {
         type: "array",
         items: { type: "string", enum: ["alt", "ctrl", "meta", "shift"] },

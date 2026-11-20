@@ -7,6 +7,13 @@ See the [Chinese changelog](CHANGELOG.zh-CN.md). Update both versions in the sam
 The CLI, extension, and DSH plugin may release separately. Protocol compatibility
 determines which versions can connect.
 
+## [Unreleased]
+
+### Added
+
+- Opt-in top-frame DOM cooperation when a foreign extension frame prevents debugger access.
+  It supports guarded text replacement and single button activation with synthetic input. (#9)
+
 ## [0.5.0] - 2026-11-12
 
 ### Added

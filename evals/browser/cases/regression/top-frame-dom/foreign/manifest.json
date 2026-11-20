@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Foreign frame test fixture",
+  "version": "1.0.0",
+  "web_accessible_resources": [
+    { "resources": ["overlay.html", "ready.js"], "matches": ["http://127.0.0.1/*"] }
+  ],
+  "content_scripts": [{ "matches": ["http://127.0.0.1/foreign*"], "js": ["inject.js"] }]
+}

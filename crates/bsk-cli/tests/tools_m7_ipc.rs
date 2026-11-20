@@ -377,6 +377,8 @@ async fn click_round_trips_ref_and_modifiers() {
         &sock,
         Method::ToolClick,
         ClickParams {
+            accept_dom_dispatch: None,
+            target_document_id: None,
             capture_id: Some("capture-test".into()),
             image_x: Some(12.5),
             image_y: Some(34.0),
@@ -559,6 +561,8 @@ async fn fill_round_trips_clear_before_default() {
         &sock,
         Method::ToolFill,
         FillParams {
+            accept_dom_dispatch: None,
+            target_document_id: None,
             session_id,
             value: "hello world".into(),
             ref_: None,
@@ -750,6 +754,8 @@ async fn m7_tools_propagate_extension_errors() {
         &sock,
         Method::ToolClick,
         ClickParams {
+            accept_dom_dispatch: None,
+            target_document_id: None,
             capture_id: None,
             image_x: None,
             image_y: None,
@@ -771,6 +777,8 @@ async fn m7_tools_propagate_extension_errors() {
         &sock,
         Method::ToolFill,
         FillParams {
+            accept_dom_dispatch: None,
+            target_document_id: None,
             session_id: session_id.clone(),
             value: "hello".into(),
             ref_: None,

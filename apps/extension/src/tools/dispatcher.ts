@@ -386,6 +386,7 @@ export class ToolDispatcher {
       return;
     }
     const req = decoded.request;
+    if (rawOperationId) req.operationId = rawOperationId;
     const policy = TOOL_POLICIES[req.method];
     const startsSession = req.method === "tool.session_start";
     const stopsSession = req.method === "tool.session_stop";

@@ -37,6 +37,16 @@ use tracing::warn;
 use super::queue::DispatchError;
 use super::sessions::SessionId;
 
+fn top_frame_journal_error() -> RpcError {
+    RpcError {
+        code: ErrorCode::PermissionDenied,
+        message: "Could not durably record the top-frame intent; no action was authorized".into(),
+        data: Some(
+            json!({"reason":"intent_journal_unavailable","effect_state":"none","dispatched":false}),
+        ),
+    }
+}
+
 /// Bound on `$BSK_HOME/intent_ledger.jsonl` before atomic compaction.
 const MAX_LEDGER_BYTES: u64 = 512 * 1024;
 /// Maximum number of recent ledger entries retained in memory and across compaction.
@@ -68,6 +78,10 @@ pub struct LedgerEntry {
     pub updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reconciled_by: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub top_frame_dom: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub renderer_settled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -261,6 +275,8 @@ impl IntentWal {
             dispatched_at: now.clone(),
             updated_at: now,
             reconciled_by: None,
+            top_frame_dom: false,
+            renderer_settled: false,
         };
         {
             let mut guard = self.inner.lock().expect("intent_wal poisoned");
@@ -275,6 +291,71 @@ impl IntentWal {
         }
     }
 
+    /// A synthetic action can outlive the forwarding process. Do not authorize one unless its
+    /// intent is on disk and its one-shot operation ID has not already been forwarded.
+    pub fn begin_top_frame_dispatch(
+        &self,
+        session_id: &SessionId,
+        tab_id: Option<i64>,
+        operation_id: &str,
+        method: &Method,
+        params: &Value,
+    ) -> Result<IntentTicket, RpcError> {
+        let mut guard = self.inner.lock().map_err(|_| top_frame_journal_error())?;
+        if guard.find_blocking_unknown(session_id, tab_id).is_some()
+            || guard.dispatched.values().any(|entry| {
+                entry.session_id == session_id.0
+                    && (entry.tab_id == tab_id || entry.tab_id.is_none() || tab_id.is_none())
+            })
+        {
+            return Err(RpcError {
+                code: ErrorCode::PermissionDenied,
+                message: "A prior intent still fences the top-frame target".into(),
+                data: Some(
+                    json!({"reason":"operation_settling","effect_state":"none","dispatched":false}),
+                ),
+            });
+        }
+        if guard.dispatched.contains_key(operation_id)
+            || guard
+                .recent
+                .iter()
+                .any(|entry| entry.operation_id == operation_id)
+        {
+            return Err(RpcError {
+                code: ErrorCode::PermissionDenied,
+                message: "A top-frame DOM operation ID cannot be reused".into(),
+                data: Some(
+                    json!({"reason":"operation_settling","effect_state":"none","dispatched":false}),
+                ),
+            });
+        }
+        let now = now_rfc3339();
+        let entry = LedgerEntry {
+            operation_id: operation_id.to_owned(),
+            session_id: session_id.0.clone(),
+            tab_id,
+            method: method.wire_name().to_owned(),
+            target_summary: Self::extract_target_summary(method, params),
+            state: IntentState::Dispatched,
+            dispatched_at: now.clone(),
+            updated_at: now,
+            reconciled_by: None,
+            top_frame_dom: true,
+            renderer_settled: false,
+        };
+        if !guard.try_append_entry(&entry, true) {
+            return Err(top_frame_journal_error());
+        }
+        guard.upsert_recent(entry.clone());
+        guard.dispatched.insert(operation_id.to_owned(), entry);
+        Ok(IntentTicket {
+            wal: self.clone(),
+            operation_id: operation_id.to_owned(),
+            finished: false,
+        })
+    }
+
     /// Finalise an `IntentTicket` into either `SETTLED` or `UNKNOWN` based on
     /// the queue/extension dispatch outcome.
     pub fn finish_dispatch(
@@ -284,7 +365,6 @@ impl IntentWal {
         outcome: &Result<Value, DispatchError>,
     ) -> IntentState {
         ticket.finished = true;
-        let next_state = classify_dispatch_outcome(method, outcome);
         let resolved_tab_id = match outcome {
             Ok(val) => val.get("tab_id").and_then(Value::as_i64),
             Err(DispatchError::Rpc(err)) => err
@@ -297,12 +377,29 @@ impl IntentWal {
 
         let mut guard = self.inner.lock().expect("intent_wal poisoned");
         let Some(mut entry) = guard.dispatched.remove(&ticket.operation_id) else {
-            return next_state;
+            return classify_dispatch_outcome(method, outcome);
+        };
+        let next_state = if entry.top_frame_dom {
+            match outcome {
+                Err(DispatchError::Rpc(error))
+                    if !error.data.as_ref().is_some_and(|data| {
+                        data["effect_state"] == "none" || data["dispatched"] == false
+                    }) =>
+                {
+                    IntentState::Unknown
+                }
+                _ => classify_dispatch_outcome(method, outcome),
+            }
+        } else {
+            classify_dispatch_outcome(method, outcome)
         };
         if entry.tab_id.is_none() && resolved_tab_id.is_some() {
             entry.tab_id = resolved_tab_id;
         }
         entry.state = next_state;
+        entry.renderer_settled = entry.top_frame_dom
+            && matches!(outcome, Err(DispatchError::Rpc(error))
+                if error.data.as_ref().and_then(|v| v.get("renderer_settled")) == Some(&Value::Bool(true)));
         entry.updated_at = now_rfc3339();
         guard.upsert_recent(entry.clone());
         guard.append_entry(&entry);
@@ -352,13 +449,21 @@ impl IntentWal {
         let mut count = 0;
         for key in matching_keys {
             if let Some(entries) = guard.unknown.remove(&key) {
+                let mut remaining = Vec::new();
                 for mut entry in entries {
+                    if entry.top_frame_dom {
+                        remaining.push(entry);
+                        continue;
+                    }
                     entry.state = IntentState::Reconciled;
                     entry.updated_at = now.clone();
                     entry.reconciled_by = Some(reconciled_by.to_owned());
                     guard.upsert_recent(entry.clone());
                     guard.append_entry(&entry);
                     count += 1;
+                }
+                if !remaining.is_empty() {
+                    guard.unknown.insert(key, remaining);
                 }
             }
         }
@@ -392,7 +497,9 @@ impl IntentWal {
             };
             let mut remaining = Vec::new();
             for mut entry in bucket.drain(..) {
-                if op_filter.is_none_or(|wanted| entry.operation_id == wanted) {
+                if op_filter.is_none_or(|wanted| entry.operation_id == wanted)
+                    && (!entry.top_frame_dom || entry.renderer_settled)
+                {
                     entry.state = IntentState::Reconciled;
                     entry.updated_at = now.clone();
                     entry.reconciled_by = Some("ledger_resolve".to_owned());
@@ -609,11 +716,15 @@ impl WalInner {
     }
 
     fn append_entry(&mut self, entry: &LedgerEntry) {
+        self.try_append_entry(entry, false);
+    }
+
+    fn try_append_entry(&mut self, entry: &LedgerEntry, durable: bool) -> bool {
         if self.ledger_path.is_none() {
-            return;
+            return !durable;
         }
         let Ok(mut line) = serde_json::to_vec(entry) else {
-            return;
+            return false;
         };
         line.push(b'\n');
         if self.bytes_written.saturating_add(line.len() as u64) > MAX_LEDGER_BYTES {
@@ -621,13 +732,18 @@ impl WalInner {
         }
         let line_len = line.len() as u64;
         if let Some(writer) = self.ensure_writer() {
-            if let Err(err) = writer.write_all(&line) {
+            if let Err(err) = writer
+                .write_all(&line)
+                .and_then(|()| if durable { writer.sync_data() } else { Ok(()) })
+            {
                 warn!(error = %err, "failed to append to intent_ledger.jsonl");
                 self.writer = None;
             } else {
                 self.bytes_written = self.bytes_written.saturating_add(line_len);
+                return true;
             }
         }
+        false
     }
 
     fn compact_on_disk(&mut self) {
@@ -866,6 +982,86 @@ mod tests {
 
     fn sid(name: &str) -> SessionId {
         SessionId(name.to_string())
+    }
+
+    #[test]
+    fn dom_authorization_requires_persistence_and_refuses_operation_reuse() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("journal");
+        let session = sid("dom");
+        let params = json!({"ref":"@e1","accept_dom_dispatch":true});
+        let method = Method::ToolFill;
+        std::fs::create_dir(&path).unwrap();
+        let unavailable = IntentWal::new(Some(path.clone()));
+        let refusal =
+            unavailable.begin_top_frame_dispatch(&session, Some(7), "once", &method, &params);
+        assert_eq!(refusal.err().unwrap().data.unwrap()["effect_state"], "none");
+        std::fs::remove_dir(&path).unwrap();
+        let wal = IntentWal::new(Some(path.clone()));
+        let ticket = wal
+            .begin_top_frame_dispatch(&session, Some(7), "once", &method, &params)
+            .unwrap();
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("\"operation_id\":\"once\"")
+        );
+        wal.finish_dispatch(ticket, &method, &Ok(json!({"tab_id":7})));
+        assert!(
+            wal.begin_top_frame_dispatch(&session, Some(7), "once", &method, &params)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn dom_unknown_stays_fenced_across_sync_restart_and_unproved_manual_resolution() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("journal");
+        let session = sid("dom");
+        let params = json!({"ref":"@e1","accept_dom_dispatch":true});
+        let method = Method::ToolClick;
+        {
+            let wal = IntentWal::new(Some(path.clone()));
+            let ticket = wal
+                .begin_top_frame_dispatch(&session, Some(7), "lost", &method, &params)
+                .unwrap();
+            wal.finish_dispatch(ticket, &method, &Err(DispatchError::Timeout));
+        }
+        let wal = IntentWal::new(Some(path));
+        assert_eq!(wal.reconcile_tab(&session, Some(7), "cooperate_sync"), 0);
+        assert_eq!(
+            wal.resolve(&session, Some(7), Some("lost")).resolved_count,
+            0
+        );
+        assert!(wal.check_gate(&session, Some(7)).is_err());
+        assert!(wal.check_gate(&session, Some(8)).is_ok());
+    }
+
+    #[test]
+    fn dom_unknown_with_a_verified_completion_can_be_resolved_explicitly_only() {
+        let dir = TempDir::new().unwrap();
+        let wal = IntentWal::new(Some(dir.path().join("journal")));
+        let session = sid("dom");
+        let method = Method::ToolFill;
+        let ticket = wal
+            .begin_top_frame_dispatch(&session, Some(7), "settled", &method, &json!({"ref":"@e1"}))
+            .unwrap();
+        let outcome = Err(DispatchError::Rpc(RpcError {
+            code: ErrorCode::PermissionDenied,
+            message: "Input did not persist".into(),
+            data: Some(json!({"effect_state":"unknown","renderer_settled":true})),
+        }));
+        assert_eq!(
+            wal.finish_dispatch(ticket, &method, &outcome),
+            IntentState::Unknown
+        );
+        assert_eq!(wal.reconcile_tab(&session, Some(7), "cooperate_sync"), 0);
+        assert_eq!(
+            wal.resolve(&session, Some(7), Some("settled"))
+                .resolved_count,
+            1
+        );
+        assert!(wal.check_gate(&session, Some(7)).is_ok());
     }
 
     #[test]

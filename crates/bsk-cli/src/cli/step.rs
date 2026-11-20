@@ -257,6 +257,7 @@ pub(crate) fn post_sync(
         call(
             Method::ToolCooperate,
             serde_json::to_value(CooperateParams {
+                allow_top_frame_dom: None,
                 control_policy: matches!(mode, CooperateAction::Sync | CooperateAction::Enable)
                     .then_some(policy.into()),
                 session_id: session.to_owned(),

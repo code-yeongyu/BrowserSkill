@@ -2,6 +2,7 @@ import type { SessionManager } from "@/session-manager/manager";
 import { CooperationController } from "./controller";
 import { FrameCollectionError, FrameUnresponsiveError } from "./frame-error";
 import { provenHiddenFrames } from "./hidden-frames";
+import { isForeignExtensionFrame } from "./top-frame-dom";
 import {
   COOPERATION_ARM,
   COOPERATION_CONTROL,
@@ -132,6 +133,7 @@ export async function collectCooperationFrames(
   repairs: FrameRepairs = new Map(),
   hidden: HiddenFrames = new Set(),
   replacementPass = false,
+  topOnly = false,
 ): Promise<CooperationFrames> {
   const frames = await chrome.webNavigation.getAllFrames({ tabId });
   const documents = new Set(frames?.map((frame) => frame.documentId));
@@ -141,6 +143,18 @@ export async function collectCooperationFrames(
   if (!frames?.length) throw new Error("No observable document in this tab");
   const gaps: FrameGap[] = [];
   const live = frames.filter((frame) => {
+    if (
+      frame.frameId !== 0 &&
+      frame.url.startsWith("chrome-extension://") &&
+      isForeignExtensionFrame(frame, chrome.runtime.id)
+    ) {
+      gaps.push({ ...frameIdentity(frame), reason: "foreign_extension_frame" });
+      return false;
+    }
+    if (topOnly && frame.frameId !== 0) {
+      gaps.push({ ...frameIdentity(frame), reason: "top_frame_only" });
+      return false;
+    }
     if (frame.errorOccurred) {
       if (frame.frameId === 0)
         throw new FrameCollectionError("page_load_failed", [frameIdentity(frame)]);
@@ -235,7 +249,7 @@ export function attachCooperation(
     sessions,
     changed,
     sessionActivity,
-    readFrames: (tabId, input, lease, repairs, hidden) =>
+    readFrames: (tabId, input, lease, repairs, hidden, topOnly) =>
       collectCooperationFrames(
         tabId,
         input ? COOPERATION_ARM : COOPERATION_READ,
@@ -243,6 +257,8 @@ export function attachCooperation(
         input,
         repairs,
         hidden,
+        false,
+        topOnly,
       ),
     resumeFrames: async (tabId, lease, repairs, hidden) => {
       await collectCooperationFrames(tabId, COOPERATION_RESUME, lease, undefined, repairs, hidden);
@@ -275,6 +291,15 @@ export function attachCooperation(
     // collected separately; invalidating here would discard the whole context
     // for an unrelated iframe navigation that may never commit.
     if (frameId === 0) controller.invalidate(tabId);
+  });
+  chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
+    if (frameId === 0) controller.invalidateTopFrameDom(tabId);
+  });
+  chrome.webNavigation.onHistoryStateUpdated.addListener(({ tabId, frameId }) => {
+    if (frameId === 0) controller.invalidateTopFrameDom(tabId);
+  });
+  chrome.webNavigation.onReferenceFragmentUpdated.addListener(({ tabId, frameId }) => {
+    if (frameId === 0) controller.invalidateTopFrameDom(tabId);
   });
   chrome.tabs.onRemoved.addListener((tabId) => controller.releaseTab(tabId));
   chrome.tabs.onDetached.addListener((tabId) => controller.detachTab(tabId));

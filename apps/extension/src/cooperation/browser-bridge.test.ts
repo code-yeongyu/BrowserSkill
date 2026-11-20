@@ -37,6 +37,7 @@ function bridge(sendMessage: ReturnType<typeof vi.fn>, frames = [main]) {
   const executeScript = vi.fn().mockResolvedValue([]);
   vi.stubGlobal("chrome", {
     webNavigation: { getAllFrames: async () => frames },
+    runtime: { id: "driver-extension" },
     tabs: { sendMessage },
     scripting: { executeScript },
   });
@@ -68,6 +69,30 @@ it("does not retry a successful state read", async () => {
   bridge(send);
   expect((await collectCooperationFrames(7, COOPERATION_READ, "lease")).frames.size).toBe(1);
   expect(send).toHaveBeenCalledOnce();
+});
+
+it("records browser-identified foreign frames as gaps without sending or injecting", async () => {
+  const send = vi.fn().mockResolvedValue(frame());
+  const inject = bridge(send, [
+    main,
+    {
+      ...main,
+      frameId: 2,
+      documentId: "foreign-document",
+      url: "chrome-extension://foreign-extension/frame.html",
+    },
+  ]);
+  const result = await collectCooperationFrames(7, COOPERATION_READ, "lease");
+  expect(result.gaps).toEqual([
+    { frame_id: 2, url: "chrome-extension:", reason: "foreign_extension_frame" },
+  ]);
+  expect([...result.frames.keys()]).toEqual([0]);
+  expect(send).toHaveBeenCalledExactlyOnceWith(
+    7,
+    { kind: COOPERATION_READ, input: undefined, lease: "lease" },
+    { documentId: main.documentId },
+  );
+  expect(inject).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -341,6 +366,7 @@ it("invalidates control for a root navigation but not for a subframe navigation"
     details: chrome.webNavigation.WebNavigationParentedCallbackDetails,
   ) => void;
   let navigate!: NavigateListener;
+  const history = vi.fn();
   vi.stubGlobal("chrome", {
     runtime: { id: "test", onMessage: { addListener: vi.fn() } },
     webNavigation: {
@@ -349,6 +375,9 @@ it("invalidates control for a root navigation but not for a subframe navigation"
           navigate = listener;
         }),
       },
+      onCommitted: { addListener: vi.fn() },
+      onHistoryStateUpdated: { addListener: history },
+      onReferenceFragmentUpdated: { addListener: vi.fn() },
     },
     tabs: { onRemoved: { addListener: vi.fn() }, onDetached: { addListener: vi.fn() } },
   });
@@ -377,6 +406,11 @@ it("invalidates control for a root navigation but not for a subframe navigation"
     url: "https://page.test/",
   });
   expect(invalidate).toHaveBeenCalledExactlyOnceWith(7);
+  const invalidateDom = vi.spyOn(controller, "invalidateTopFrameDom");
+  history.mock.calls[0][0]({ tabId: 7, frameId: 0 });
+  expect(invalidateDom).toHaveBeenCalledExactlyOnceWith(7);
+  history.mock.calls[0][0]({ tabId: 7, frameId: 8 });
+  expect(invalidateDom).toHaveBeenCalledTimes(1);
 });
 
 it("recollects a proven child document replacement once and retains new human input", async () => {

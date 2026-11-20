@@ -650,7 +650,7 @@ async fn forward_one(
             .as_ref()
             .is_some_and(AbortToken::is_cancelled)
     {
-        return Err(cancelled_error(
+        return Err(cancelled_before_forwarding(
             job.inflight.as_deref(),
             "tool dispatch cancelled before forwarding",
         ));
@@ -707,7 +707,7 @@ async fn forward_one(
             match outcome {
                 PromoteOutcome::Promoted => Some(entry.cancel_token()),
                 PromoteOutcome::Cancelled => {
-                    return Err(cancelled_error(
+                    return Err(cancelled_before_forwarding(
                         Some(entry),
                         "tool dispatch cancelled before forwarding",
                     ));
@@ -724,7 +724,7 @@ async fn forward_one(
                 .as_ref()
                 .is_some_and(AbortToken::is_cancelled)
             {
-                return Err(cancelled_error(
+                return Err(cancelled_before_forwarding(
                     None,
                     "session lifecycle cancelled before forwarding",
                 ));
@@ -1352,6 +1352,14 @@ async fn await_with_dialog_cancel(
             },
         },
     }
+}
+
+fn cancelled_before_forwarding(entry: Option<&ToolInflightEntry>, message: &str) -> RpcError {
+    let mut error = cancelled_error(entry, message);
+    let data = error.data.get_or_insert_with(|| serde_json::json!({}));
+    data["effect_state"] = serde_json::json!("none");
+    data["dispatched"] = serde_json::json!(false);
+    error
 }
 
 /// Map an inflight entry's recorded [`CancelReason`] to the right

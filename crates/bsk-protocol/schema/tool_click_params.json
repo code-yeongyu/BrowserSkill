@@ -76,6 +76,12 @@
     }
   },
   "properties": {
+    "accept_dom_dispatch": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "button": {
       "anyOf": [
         {
@@ -173,6 +179,12 @@
       "format": "int64",
       "type": [
         "integer",
+        "null"
+      ]
+    },
+    "target_document_id": {
+      "type": [
+        "string",
         "null"
       ]
     },

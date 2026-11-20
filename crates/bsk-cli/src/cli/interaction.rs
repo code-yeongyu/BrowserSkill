@@ -103,6 +103,12 @@ pub(crate) fn split_target(
 
 #[derive(Debug, Clone, Args)]
 pub struct ClickArgs {
+    /// Explicitly accept synthetic DOM dispatch for a top-frame control context.
+    #[arg(long)]
+    pub accept_dom_dispatch: bool,
+
+    #[arg(long, requires = "accept_dom_dispatch")]
+    pub target_document_id: Option<String>,
     /// Bind a Canvas point click to the image returned by screenshot --ref.
     #[arg(long = "capture", requires_all = ["image_x", "image_y"], conflicts_with = "selector")]
     pub capture_id: Option<String>,
@@ -163,6 +169,8 @@ pub fn dispatch_click(args: ClickArgs, format: Format) -> Result<(), CliError> {
     crate::cli::business_rpc::set_caller_scope(args.scope.clone());
     let info = ensure_daemon().context("ensure daemon is running")?;
     let params = ClickParams {
+        accept_dom_dispatch: args.accept_dom_dispatch.then_some(true),
+        target_document_id: args.target_document_id,
         capture_id: args.capture_id.clone(),
         image_x: args.image_x,
         image_y: args.image_y,
@@ -428,6 +436,12 @@ pub fn dispatch_blur(args: BlurArgs, format: Format) -> Result<(), CliError> {
 
 #[derive(Debug, Clone, Args)]
 pub struct FillArgs {
+    /// Explicitly accept synthetic DOM dispatch for a top-frame control context.
+    #[arg(long)]
+    pub accept_dom_dispatch: bool,
+
+    #[arg(long, requires = "accept_dom_dispatch")]
+    pub target_document_id: Option<String>,
     /// Snapshot ref (`@e3`, `e3`) or CSS selector. Optional when `--ref`/`--selector` is used.
     #[arg(value_name = "TARGET")]
     pub target: Option<String>,
@@ -468,6 +482,8 @@ pub fn dispatch_fill(args: FillArgs, format: Format) -> Result<(), CliError> {
     crate::cli::business_rpc::set_caller_scope(args.scope.clone());
     let info = ensure_daemon().context("ensure daemon is running")?;
     let params = FillParams {
+        accept_dom_dispatch: args.accept_dom_dispatch.then_some(true),
+        target_document_id: args.target_document_id,
         session_id: args.session.clone().unwrap_or_default(),
         value: args.value.clone(),
         ref_,

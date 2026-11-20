@@ -13,6 +13,9 @@ pub enum CooperateAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CooperateParams {
+    /// Allows synthetic top-document control only on a classified debugger denial.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_top_frame_dom: Option<bool>,
     /// Omitted by legacy callers. A negotiated policy remains fixed for the session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub control_policy: Option<ControlPolicy>,

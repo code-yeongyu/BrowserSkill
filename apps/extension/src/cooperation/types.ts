@@ -104,7 +104,12 @@ export interface FrameIdentity {
  * element was proven not displayed, without area, or invisible, and unfocused.
  */
 export interface FrameGap extends FrameIdentity {
-  reason: "load_error" | "inactive_document" | "hidden_frame";
+  reason:
+    | "load_error"
+    | "inactive_document"
+    | "hidden_frame"
+    | "foreign_extension_frame"
+    | "top_frame_only";
 }
 
 export interface CooperationFrames {
@@ -137,6 +142,7 @@ export interface CooperationParams {
   timeout_ms?: number;
   max_tokens?: number;
   control_policy?: "auto" | "strict" | "target";
+  allow_top_frame_dom?: boolean;
 }
 
 export const COOPERATION_READY = "cooperation.ready";
