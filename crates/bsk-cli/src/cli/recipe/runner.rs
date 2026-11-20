@@ -401,6 +401,7 @@ where
             let call = &mut self.call;
             let reply = cooperate::settle::run(|mode| {
                 let params = CooperateParams {
+                    allow_top_frame_dom: None,
                     control_policy: matches!(mode, CooperateAction::Sync)
                         .then_some(ControlPolicy::Auto),
                     session_id: session.clone(),

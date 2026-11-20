@@ -30,9 +30,15 @@ console.log(chromeVersion);
 
 const fixture = await readFile(join(directory, "fixture.html"));
 const script = await readFile(join(directory, "fixture.js"));
-const server = createServer((req, res) => {
+const checkpoints = new Set();
+const server = createServer(async (req, res) => {
   const path = new URL(req.url, "http://127.0.0.1").pathname;
-  if (path === "/fixture.js") {
+  if (path === "/checkpoint" && req.method === "POST") {
+    let receipt = "";
+    for await (const chunk of req) receipt += chunk;
+    checkpoints.add(receipt);
+    res.writeHead(204).end();
+  } else if (path === "/fixture.js") {
     res.writeHead(200, { "content-type": "text/javascript" }).end(script);
   } else if (path === "/foreign" || path === "/plain") {
     res
@@ -316,6 +322,22 @@ try {
           ok(await sync());
           assert.equal((await ledger()).pending_unknown.length, 1);
         }));
+      await test("the journal fences the context's tab even when another tab became active", () =>
+        withSession("/foreign?case=trusted-only", async ({ sync, action, ids }) => {
+          const view = ok(await sync());
+          const other = await command("tab", "create", "--session", ids.session_id);
+          assert.notEqual(other.tab_id, ids.tab_id);
+          await navigate(other.tab_id, "/plain");
+          ok(await sync({ tab_id: other.tab_id, allow_top_frame_dom: false }));
+          refused(
+            await fill(action, view, "Note", { tab_id: undefined }),
+            "synthetic_input_unconfirmed",
+            "unknown",
+          );
+          const ledger = await command("ledger", "status", "--session", ids.session_id);
+          assert.equal(ledger.pending_unknown.length, 1);
+          assert.equal(ledger.pending_unknown[0].tab_id, ids.tab_id);
+        }));
       await test("document replacement during activation never replays the operation or clears its fence", () =>
         withSession(
           "/foreign?case=navigate-on-activation",
@@ -392,6 +414,110 @@ try {
           const reply = await sync({ allow_top_frame_dom: false });
           assert(reply.error, JSON.stringify(reply));
           assert.notEqual(reply.result?.backend, "top_frame_dom");
+        }));
+      await test("the CLI exposes top-frame opt-in without leaking ctx suffixes", () =>
+        withSession("/foreign?case=redaction", async ({ ids, state }) => {
+          const view = await command(
+            "cooperate",
+            "sync",
+            "--policy",
+            "target",
+            "--allow-top-frame-dom",
+            "--session",
+            ids.session_id,
+            "--tab-id",
+            String(ids.tab_id),
+          );
+          assert.equal(view.backend, "top_frame_dom");
+          assert(!JSON.stringify(view).includes("private fixture marker"));
+          const target = view.observation.targets.find((item) => item.label.startsWith("Note"));
+          assert(target);
+          await command(
+            "fill",
+            target.ref,
+            "--value",
+            "sample",
+            "--accept-dom-dispatch",
+            "--session",
+            ids.session_id,
+            "--context",
+            view.context_id,
+          );
+          assert.equal((await state()).note, "sample");
+        }));
+      await test("trusted input on the top document revokes the previous DOM context", () =>
+        withSession("/foreign", async ({ sync, action, state }) => {
+          const view = ok(await sync());
+          const pages = (await send("Target.getTargets")).targetInfos;
+          const page = pages.find(
+            (target) => target.type === "page" && target.url === `${origin}/foreign`,
+          );
+          assert(page, "owned fixture target not found");
+          const { sessionId } = await send("Target.attachToTarget", {
+            targetId: page.targetId,
+            flatten: true,
+          });
+          try {
+            for (const type of ["mousePressed", "mouseReleased"]) {
+              await send(
+                "Input.dispatchMouseEvent",
+                { type, x: 400, y: 360, button: "left", clickCount: 1 },
+                sessionId,
+              );
+            }
+          } finally {
+            await send("Target.detachFromTarget", { sessionId });
+          }
+          const reply = await fill(action, view);
+          assert.match(reply.error?.data?.reason ?? "", /^(human_intervention|stale_context)$/u);
+          assert.equal(reply.error.data.effect_state, "none");
+          assert.equal((await state()).effects.inputs, "0");
+        }));
+      await test("cancellation before renderer authorization has no effect", () =>
+        withSession("/foreign", async ({ sync, action, ids, state }) => {
+          const view = ok(await sync());
+          const id = randomUUID();
+          const busy = readTop(ids.tab_id, () => {
+            navigator.sendBeacon("/checkpoint", "busy");
+            const deadline = performance.now() + 2400;
+            while (performance.now() < deadline) {
+              // Keep the renderer from reaching the commit gate.
+            }
+          });
+          try {
+            await poll("renderer busy", () => checkpoints.has("busy"));
+            const pending = action(
+              "tool.fill",
+              view.context_id,
+              { ref: ref(view, "Note"), value: "sample" },
+              id,
+            );
+            await poll(
+              "cancel registered operation",
+              async () => ok(await rpc("cancel", { rpc_id: id })).cancelled,
+            );
+            const reply = await pending;
+            assert.equal(reply.error?.data?.effect_state, "none", JSON.stringify(reply));
+          } finally {
+            await busy;
+          }
+          assert.equal((await state()).effects.inputs, "0");
+        }));
+      await test("cancellation after activation retains an unknown intent without replay", () =>
+        withSession("/foreign?case=pause-on-activation", async ({ sync, action, ids, state }) => {
+          const view = ok(await sync());
+          ok(await fill(action, view));
+          const id = randomUUID();
+          const pending = action("tool.click", view.context_id, { ref: ref(view, "Activate") }, id);
+          await poll("activation dispatched", () => checkpoints.has("activated"));
+          assert.equal(ok(await rpc("cancel", { rpc_id: id })).cancelled, true);
+          const reply = await pending;
+          assert.equal(reply.error?.data?.effect_state, "unknown", JSON.stringify(reply));
+          assert.equal((await state()).effects.activations, "1");
+          assert.equal(
+            (await command("ledger", "status", "--session", ids.session_id)).pending_unknown.length,
+            1,
+          );
         }));
       assert.deepEqual(await command("session", "list"), []);
     },

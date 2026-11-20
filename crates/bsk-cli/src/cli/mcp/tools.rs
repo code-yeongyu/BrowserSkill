@@ -350,6 +350,12 @@ impl Link {
         mut params: Value,
         timeout: Duration,
     ) -> Result<Value, CliError> {
+        let dom = bsk_protocol::compatibility::Feature::TopFrameDomV1;
+        let peer = bsk_protocol::compatibility::Peer::Daemon;
+        if method.features().contains(&dom) && dom.requested(peer, &params) {
+            dom.require(peer, &self.protocol)
+                .map_err(CliError::from_rpc)?;
+        }
         if let Some(object) = params.as_object_mut() {
             let resolved_scope = || {
                 crate::daemon::scopes::resolve_caller_scope_from_env(
@@ -410,7 +416,15 @@ impl Link {
         };
         self.control.current.lock().unwrap().take();
         match outcome {
-            Ok(Ok(value)) => Ok(value),
+            Ok(Ok(mut value)) => {
+                if value["backend"] == "top_frame_dom" {
+                    crate::cli::ctx_redaction::redact_value(
+                        &mut value,
+                        crate::cli::ctx_redaction::Origin::Unknown,
+                    );
+                }
+                Ok(value)
+            }
             Ok(Err(err)) => Err(CliError::from_rpc(err)),
             Err(err) => Err(CliError::Local(err)),
         }
@@ -770,6 +784,8 @@ struct SessionArgs {
     /// sync: recover transient read-only refusals by waiting and syncing again, at most 3
     /// attempts. Never repeats an action.
     settle: Option<bool>,
+    /// sync: explicitly allow the synthetic top-document backend on debugger denial.
+    allow_top_frame_dom: Option<bool>,
     /// wait: how long to wait for the user to hand back control, 0-25000 ms.
     timeout_ms: Option<u64>,
 }
@@ -916,7 +932,14 @@ async fn session(
                 SessionAction::Sync => (
                     "sync",
                     CooperateAction::Sync,
-                    &["session", "tab_id", "policy", "max_tokens", "settle"],
+                    &[
+                        "session",
+                        "tab_id",
+                        "policy",
+                        "max_tokens",
+                        "settle",
+                        "allow_top_frame_dom",
+                    ],
                 ),
                 SessionAction::Wait => (
                     "wait",
@@ -933,6 +956,7 @@ async fn session(
             let policy: Option<ControlPolicy> = syncing
                 .then(|| cooperate::Policy::from(args.policy.unwrap_or(Policy::Auto)).into());
             let params = CooperateParams {
+                allow_top_frame_dom: args.allow_top_frame_dom,
                 control_policy: policy,
                 session_id: session_or_implicit(),
                 action,
@@ -952,6 +976,7 @@ async fn session(
                         let mut current = params.clone();
                         if matches!(mode, CooperateAction::Wait) {
                             current.control_policy = None;
+                            current.allow_top_frame_dom = None;
                             current.timeout_ms = Some(wait_ms.unwrap_or(1000));
                         }
                         current.action = mode;

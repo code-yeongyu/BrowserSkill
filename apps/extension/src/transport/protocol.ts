@@ -12,6 +12,7 @@ export type ToolRequest<M extends ExtensionToolMethod = ExtensionToolMethod> = {
   id: string;
   method: M;
   params: ParamsOf<M>;
+  operationId?: string;
 };
 
 export type ToolHandlerMap<Context> = {

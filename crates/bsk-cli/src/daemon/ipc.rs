@@ -431,7 +431,7 @@ pub fn full_handler(status: DaemonStatus, state: Arc<DaemonState>) -> RpcHandler
                 (&cooperate_sync_session, &mut body)
             {
                 let recorded = state.scopes.record_cooperate_result(sid, value);
-                if *is_sync {
+                if *is_sync && value["backend"] != "top_frame_dom" {
                     let synced_tab_id = value
                         .get("tab_id")
                         .and_then(Value::as_i64)
@@ -588,12 +588,36 @@ fn prepare_implicit_session_and_evidence(
         }
         _ => {
             obj.remove("context_id");
+            if obj.get("accept_dom_dispatch") == Some(&Value::Bool(true)) {
+                return Err(RpcError {
+                    code: ErrorCode::PermissionDenied,
+                    message: "Top-frame DOM input requires the explicit context from sync".into(),
+                    data: Some(serde_json::json!({"reason":"stale_context","effect_state":"none"})),
+                });
+            }
             if method_auto_injects_target_context(method, &Value::Object(obj.clone()))
                 && let Some(uuid) = state.scopes.implicit_target_context(&session_id, tab_id)
             {
                 obj.insert("context_id".into(), Value::String(uuid));
             }
         }
+    }
+    if obj.get("accept_dom_dispatch") == Some(&Value::Bool(true)) {
+        let bound_tab = obj
+            .get("context_id")
+            .and_then(Value::as_str)
+            .and_then(|ctx| state.scopes.top_frame_context_tab(&session_id, ctx))
+            .filter(|bound| tab_id.is_none_or(|requested| requested == *bound));
+        let Some(bound_tab) = bound_tab else {
+            return Err(RpcError {
+                code: ErrorCode::PermissionDenied,
+                message: "The explicit top-frame context does not bind this session and tab".into(),
+                data: Some(serde_json::json!({
+                    "reason":"stale_context","phase":"precondition","effect_state":"none",
+                })),
+            });
+        };
+        obj.insert("tab_id".into(), Value::from(bound_tab));
     }
 
     // Expand explicit `--observation o1` ONLY; never fabricate omitted `observation_id`.
@@ -870,7 +894,10 @@ async fn handle_tool_dispatch(
         Ok(timeout) => timeout,
         Err(err) => return ResponseBody::Err(err),
     };
-    let inflight_guard = match state.tool_inflight.register(cli_rpc_id, session_id.clone()) {
+    let inflight_guard = match state
+        .tool_inflight
+        .register(cli_rpc_id.clone(), session_id.clone())
+    {
         Ok(guard) => guard,
         Err(err) => {
             return ResponseBody::Err(RpcError {
@@ -1006,12 +1033,36 @@ async fn handle_tool_dispatch(
     // serial busy lock — finishing the recording unblocks await.
     let independent_control = method == Method::ToolCooperate
         && params.get("action").and_then(Value::as_str) != Some("enable");
-    let wal_ticket = wal_mutating.then(|| {
-        let op_id = params.get("_operation_id").and_then(Value::as_str);
-        state
-            .intent_wal
-            .begin_dispatch(&session_id, wal_tab_id, op_id, &method, &params)
-    });
+    let dom_dispatch = matches!(method, Method::ToolFill | Method::ToolClick)
+        && params.get("accept_dom_dispatch") == Some(&Value::Bool(true));
+    let wal_ticket = if dom_dispatch {
+        let operation_id = params
+            .get("_operation_id")
+            .and_then(Value::as_str)
+            .unwrap_or(&cli_rpc_id)
+            .to_owned();
+        let ticket = match state.intent_wal.begin_top_frame_dispatch(
+            &session_id,
+            wal_tab_id,
+            &operation_id,
+            &method,
+            &params,
+        ) {
+            Ok(ticket) => ticket,
+            Err(error) => return ResponseBody::Err(error),
+        };
+        if let Some(object) = params.as_object_mut() {
+            object.insert("_operation_id".into(), Value::String(operation_id));
+        }
+        Some(ticket)
+    } else {
+        wal_mutating.then(|| {
+            let op_id = params.get("_operation_id").and_then(Value::as_str);
+            state
+                .intent_wal
+                .begin_dispatch(&session_id, wal_tab_id, op_id, &method, &params)
+        })
+    };
     let outcome = if independent_control
         || matches!(
             method,
@@ -1031,11 +1082,11 @@ async fn handle_tool_dispatch(
             .await
     };
     drop(inflight_guard);
-    if let Some(wal_ticket) = wal_ticket {
+    let ledger_outcome = wal_ticket.map(|wal_ticket| {
         state
             .intent_wal
-            .finish_dispatch(wal_ticket, &method, &outcome);
-    }
+            .finish_dispatch(wal_ticket, &method, &outcome)
+    });
     match outcome {
         Ok(v) if method == Method::ToolDownload => {
             let id = download_transfer_id.expect("download transfer allocated");
@@ -1095,6 +1146,16 @@ async fn handle_tool_dispatch(
                     "activity": state.tool_queues.activity(&session_id).ok(),
                     "wait": { "action": "wait", "session_id": session_id.0, "wait_ms": 10000 },
                 }));
+            }
+            if dom_dispatch && let Some(ledger_outcome) = ledger_outcome {
+                let data = error.data.get_or_insert_with(|| serde_json::json!({}));
+                data["effect_state"] = serde_json::json!(if ledger_outcome
+                    == super::intent_wal::IntentState::Unknown
+                {
+                    "unknown"
+                } else {
+                    "none"
+                });
             }
             ResponseBody::Err(error)
         }

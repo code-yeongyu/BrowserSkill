@@ -3,6 +3,7 @@ import {
   type SessionContext,
   type SessionManager,
 } from "@/session-manager/manager";
+import { isCdpExtensionAccessDenied } from "@/tools/errors";
 import { type ResolvedActionTarget, resolveActionTarget } from "@/tools/interaction";
 import { captureVomObservation, handleSnapshot } from "@/tools/observation";
 import { isPassiveDebugAction, toolPolicy } from "@/tools/policy";
@@ -43,6 +44,15 @@ import {
 } from "./observation-evidence";
 import { pointerTargetValidator } from "./pointer-target";
 import { type HeldText, textDelta } from "./text-delta";
+import {
+  type DomAction,
+  type DomContext,
+  domError,
+  domMode,
+  isForeignExtensionFrame,
+  topDocument,
+  topDomCall,
+} from "./top-frame-dom";
 import type {
   CooperationFrames,
   CooperationParams,
@@ -99,6 +109,8 @@ interface TabState {
   unresponsive?: FrameIdentity[];
   frames: Frames;
   context?: Context;
+  domContext?: DomContext;
+  domSelected?: boolean;
   frameGaps: FrameGap[];
   frameRepairs: FrameRepairs;
   hiddenFrames: HiddenFrames;
@@ -134,6 +146,7 @@ export interface CooperationDeps {
     lease: string,
     repairs: FrameRepairs,
     hidden: HiddenFrames,
+    topOnly?: boolean,
   ): Promise<CooperationFrames>;
   resumeFrames(
     tabId: number,
@@ -661,6 +674,14 @@ export class CooperationController implements ControlAuthority {
     state.unresponsive = undefined;
     this.changed(state);
   }
+  invalidateTopFrameDom(tabId: number) {
+    const state = this.tabs.get(tabId);
+    if (state?.domSelected) {
+      state.domContext = undefined;
+      state.epoch++;
+      this.changed(state);
+    }
+  }
   invalidateChildFrames(tabId: number) {
     const state = this.tabs.get(tabId);
     if (!state) return;
@@ -720,7 +741,11 @@ export class CooperationController implements ControlAuthority {
     for (const sessionId of this.defaultTabs.keys())
       if (!this.deps.sessions.has(sessionId)) this.release(sessionId);
   }
-  private async refresh(state: TabState, input?: InputExpectation): Promise<Frames> {
+  private async refresh(
+    state: TabState,
+    input?: InputExpectation,
+    topOnly = false,
+  ): Promise<Frames> {
     const live = () =>
       this.tabs.get(state.tabId) === state && this.deps.sessions.has(state.sessionId);
     if (!live()) throw new Error("Shared-tab control has ended");
@@ -732,6 +757,7 @@ export class CooperationController implements ControlAuthority {
         state.lease,
         state.frameRepairs,
         state.hiddenFrames,
+        ...(topOnly ? ([true] as const) : []),
       );
       frames = collection.frames;
       if (!live()) throw new Error("Shared-tab control ended during collection");
@@ -826,6 +852,10 @@ export class CooperationController implements ControlAuthority {
     if (state.sessionId !== session.sessionId)
       return failure("This tab belongs to another session");
     if (state.stopped && params.action !== "status") return stopped();
+    const allowDom =
+      params.allow_top_frame_dom === true && params.action === "sync" && targetPolicy;
+    if (params.allow_top_frame_dom === true && !allowDom)
+      return domError("unsupported_in_degraded_mode");
     if (!isInitialBlank(target)) state.bootstrap = false;
     const commandEnteredAt = this.now();
     if (params.action === "enable" || (params.action === "sync" && params.tab_id !== undefined))
@@ -842,7 +872,31 @@ export class CooperationController implements ControlAuthority {
           state.unavailable = true;
         }
       };
-      await refresh();
+      try {
+        await refresh();
+      } catch (error) {
+        if (!allowDom || state.working || signal.aborted) throw error;
+        let denied = isCdpExtensionAccessDenied(error);
+        if (
+          !denied &&
+          (error instanceof FrameCollectionError || error instanceof FrameUnresponsiveError)
+        ) {
+          try {
+            await cdp.ensureAttachedToUrl?.(state.tabId, target.url);
+          } catch (probe) {
+            denied = isCdpExtensionAccessDenied(probe);
+          }
+        }
+        if (!denied || state.working || signal.aborted) throw error;
+        state.working = true;
+        try {
+          return await this.syncTopFrameDom(state, session, params, signal);
+        } finally {
+          state.working = false;
+          state.lastAgentActivity = this.now();
+          this.changed(state);
+        }
+      }
       if (params.action === "wait") {
         const timeout = Math.min(Math.max(params.timeout_ms ?? 15000, 0), 25000);
         const deadline = this.now() + timeout;
@@ -893,6 +947,7 @@ export class CooperationController implements ControlAuthority {
             ![...state.frames.values()].some((frame) => frame.pending),
           control_policy: session.controlPolicy ?? null,
           ...(state.frameGaps.length ? { frame_gaps: state.frameGaps } : {}),
+          ...(state.domSelected ? domMode : {}),
         };
       }
       if (
@@ -988,7 +1043,13 @@ export class CooperationController implements ControlAuthority {
               },
               signal,
             );
-        if (observation && isRpcError(observation)) return observation;
+        if (observation && isRpcError(observation)) {
+          return allowDom &&
+            (observation.data?.reason === "cdp_extension_access_denied" ||
+              isCdpExtensionAccessDenied(observation.message))
+            ? await this.syncTopFrameDom(state, session, params, signal)
+            : observation;
+        }
         const after = await this.refresh(state);
         if (state.stopped) return stopped();
         // A full target snapshot can publish main-document control during child
@@ -1042,6 +1103,8 @@ export class CooperationController implements ControlAuthority {
               }
             : {}),
         };
+        state.domSelected = false;
+        state.domContext = undefined;
         state.context = context;
         state.baseline = context;
         // The agent has now observed the refused change; tolerate it from here on.
@@ -1134,6 +1197,187 @@ export class CooperationController implements ControlAuthority {
         failure(error instanceof Error ? error.message : String(error)),
         state.unresponsive,
       );
+    }
+  }
+
+  private async syncTopFrameDom(
+    state: TabState,
+    session: SessionContext,
+    params: CooperationParams,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    if (!session.agentCreatedTabs.has(state.tabId)) return domError("unsupported_in_degraded_mode");
+    try {
+      await this.refresh(state, undefined, true);
+    } catch {
+      return domError("top_frame_injection_denied");
+    }
+    const epoch = state.epoch;
+    const frame = await topDocument(state.tabId).catch(() => undefined);
+    if (!frame) return domError("top_frame_injection_denied");
+    const context: DomContext = { id: crypto.randomUUID(), documentId: frame.documentId, epoch };
+    const blocked = () =>
+      signal.aborted ||
+      this.controlError(session, state) ||
+      state.epoch !== epoch ||
+      state.unavailable ||
+      !state.frames.get(0) ||
+      [...state.frames.values()].some((entry) => entry.pending);
+    if (blocked()) return domError("human_intervention");
+    const scene = await topDomCall(state.tabId, context, {
+      kind: "observe",
+      limit: Math.min(16000, Math.max(160, (params.max_tokens ?? 4000) * 3)),
+    }).catch(() => undefined);
+    if (!scene) return domError("top_frame_injection_denied");
+    if (scene.kind === "refused") return domError(scene.reason);
+    if (
+      scene.kind !== "observation" ||
+      blocked() ||
+      (await topDocument(state.tabId).catch(() => undefined))?.documentId !== context.documentId ||
+      blocked()
+    )
+      return domError("stale_context");
+    state.domContext = context;
+    state.domSelected = true;
+    state.context = undefined;
+    state.baseline = undefined;
+    session.controlPolicy = "target";
+    return {
+      ...domMode,
+      tab_id: state.tabId,
+      context_id: context.id,
+      control_policy: "target",
+      kind: "baseline",
+      history_complete: false,
+      changes: [],
+      ...(state.frameGaps.length ? { frame_gaps: state.frameGaps } : {}),
+      observation: { text: scene.text, truncated: scene.truncated, targets: scene.targets },
+      state: { ...this.view(state.tabId), mode: "ready" },
+    };
+  }
+
+  private async runTopFrameDom(
+    req: RequestFrame & { operationId?: string },
+    state: TabState,
+    session: SessionContext,
+    signal: AbortSignal,
+  ): Promise<unknown> {
+    const params = req.params as {
+      context_id?: string;
+      accept_dom_dispatch?: unknown;
+      target_document_id?: string;
+      ref?: string;
+      value?: string;
+      expect?: unknown;
+      [key: string]: unknown;
+    };
+    const context = state.domContext;
+    if (!context || context.id !== params.context_id || context.epoch !== state.epoch)
+      return domError("stale_context");
+    if (params.accept_dom_dispatch !== true) return domError("dom_dispatch_opt_in_required");
+    if (!req.operationId) return domError("dom_dispatch_opt_in_required");
+    if (state.working) return domError("operation_settling");
+    if (req.method !== "tool.fill" && req.method !== "tool.click")
+      return domError("unsupported_in_degraded_mode");
+    const fill = req.method === "tool.fill";
+    if (
+      !params.ref ||
+      !/^@?e[1-9]\d*$/u.test(params.ref) ||
+      [
+        "selector",
+        "observation_id",
+        "depends_on",
+        "unverified",
+        "capture_id",
+        "image_x",
+        "image_y",
+        "mode",
+      ].some((key) => params[key] !== undefined) ||
+      (fill && (params.clear_before === false || typeof params.value !== "string")) ||
+      (!fill &&
+        ((params.click_count !== undefined && params.click_count !== 1) ||
+          (params.button !== undefined && params.button !== "left") ||
+          (Array.isArray(params.modifiers) && params.modifiers.length > 0)))
+    )
+      return domError("unsupported_in_degraded_mode");
+    if (params.target_document_id && params.target_document_id !== context.documentId) {
+      const frame = (
+        await chrome.webNavigation.getAllFrames({ tabId: state.tabId }).catch(() => null)
+      )?.find((candidate) => candidate.documentId === params.target_document_id);
+      return domError(
+        frame && isForeignExtensionFrame(frame, chrome.runtime.id)
+          ? "target_in_foreign_extension_frame"
+          : "target_unobservable",
+      );
+    }
+    const expect = parseExpectations(params.expect);
+    if (isRpcError(expect)) return expect;
+    if (expect.some((item) => !/^@?e[1-9]\d*$/u.test(item.target)))
+      return domError("unsupported_in_degraded_mode");
+    if (this.controlError(session, state)) return domError("human_intervention");
+    const action: DomAction = {
+      ref: params.ref,
+      expect,
+      operationId: req.operationId,
+      input:
+        fill && typeof params.value === "string"
+          ? { kind: "fill", value: params.value }
+          : { kind: "click" },
+    };
+    state.working = true;
+    this.changed(state);
+    let committed = false;
+    let rendererSettled = false;
+    const stale = () =>
+      state.domContext !== context ||
+      context.epoch !== state.epoch ||
+      !isAgentControlledTab(session, state.tabId);
+    try {
+      await this.refresh(state, undefined, true);
+      const root = await topDocument(state.tabId);
+      if (stale() || root?.documentId !== context.documentId) return domError("stale_context");
+      if (signal.aborted || this.controlError(session, state))
+        return domError("human_intervention");
+      const prepared = await topDomCall(state.tabId, context, { kind: "arm", action });
+      if (prepared.kind === "refused") return domError(prepared.reason);
+      if (prepared.kind !== "armed") return domError("stale_context");
+      if (stale() || signal.aborted || this.controlError(session, state)) {
+        await topDomCall(state.tabId, context, {
+          kind: "retire",
+          operationId: action.operationId,
+        }).catch(() => undefined);
+        return domError(stale() ? "stale_context" : "human_intervention");
+      }
+      committed = true;
+      const result = await topDomCall(state.tabId, context, { kind: "commit", action });
+      rendererSettled = true;
+      if (result.kind === "refused" && !result.sent) return domError(result.reason);
+      const active = await topDocument(state.tabId);
+      if (
+        stale() ||
+        signal.aborted ||
+        active?.documentId !== context.documentId ||
+        this.controlError(session, state)
+      )
+        return domError("synthetic_input_unconfirmed", "unknown", rendererSettled);
+      if (result.kind === "filled")
+        return {
+          ...domMode,
+          tab_id: state.tabId,
+          used_ref: params.ref,
+          value_length: result.length,
+        };
+      if (result.kind === "clicked")
+        return { ...domMode, tab_id: state.tabId, used_ref: params.ref, x: result.x, y: result.y };
+      return domError("synthetic_input_unconfirmed", "unknown", rendererSettled);
+    } catch {
+      return committed
+        ? domError("synthetic_input_unconfirmed", "unknown", rendererSettled)
+        : domError("top_frame_injection_denied");
+    } finally {
+      state.working = false;
+      state.lastAgentActivity = this.now();
+      this.changed(state);
     }
   }
 
@@ -1374,6 +1618,7 @@ export class CooperationController implements ControlAuthority {
           session_id?: string;
           tab_id?: number;
           context_id?: string;
+          accept_dom_dispatch?: boolean;
           observation_id?: string;
           expect?: unknown;
           capture_id?: string;
@@ -1543,21 +1788,25 @@ export class CooperationController implements ControlAuthority {
       ? [...this.tabs.values()].find(
           (state) =>
             state.sessionId === params.session_id &&
-            (state.context?.id === params.context_id || state.baseline?.id === params.context_id),
+            (state.context?.id === params.context_id ||
+              state.baseline?.id === params.context_id ||
+              state.domContext?.id === params.context_id),
         )
       : undefined;
     if (
       params.context_id &&
       (!bound || (params.tab_id !== undefined && params.tab_id !== bound.tabId))
     )
-      return targetPolicy
-        ? actionError(
-            "control_context_invalid",
-            "This control context is no longer valid for this session and tab",
-            "control",
-            "Synchronize the intended tab after control is returned, inspect the current state and decide again.",
-          )
-        : failure("This context belongs to a different or superseded observation");
+      return params.accept_dom_dispatch === true
+        ? domError("stale_context")
+        : targetPolicy
+          ? actionError(
+              "control_context_invalid",
+              "This control context is no longer valid for this session and tab",
+              "control",
+              "Synchronize the intended tab after control is returned, inspect the current state and decide again.",
+            )
+          : failure("This context belongs to a different or superseded observation");
     const target = await resolveTargetTab(
       this.deps.sessions,
       session,
@@ -1571,6 +1820,9 @@ export class CooperationController implements ControlAuthority {
       return failure("Actions require an owned task tab; borrow user tabs explicitly");
     }
     const state = this.track(session, target.tabId);
+    if (!read && (state.domSelected || params.accept_dom_dispatch === true)) {
+      return this.runTopFrameDom(req, state, session, signal);
+    }
     if (state.bootstrap && !isInitialBlank(target)) state.bootstrap = false;
     if (state.bootstrap && policy.bootstrapAllowed && !params.context_id) {
       if (

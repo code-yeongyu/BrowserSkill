@@ -113,6 +113,9 @@ async function fixture() {
     debugger: { onDetach: event() },
     webNavigation: {
       onBeforeNavigate: event(),
+      onCommitted: event(),
+      onHistoryStateUpdated: event(),
+      onReferenceFragmentUpdated: event(),
       onCompleted: event(),
       onErrorOccurred: event(),
       onCreatedNavigationTarget,

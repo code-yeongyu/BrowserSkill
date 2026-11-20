@@ -101,7 +101,7 @@ macro_rules! methods {
 }
 
 methods! {
-    ToolCooperate => ("tool.cooperate", Extension, ControlPlane, false, CooperateParams, serde_json::Value, [TargetControl]),
+    ToolCooperate => ("tool.cooperate", Extension, ControlPlane, false, CooperateParams, serde_json::Value, [TargetControl, TopFrameDomV1]),
     LocalAuthPair => ("local_auth.pair", Daemon, ControlPlane, false, serde_json::Value, serde_json::Value, []),
     LocalAuthDevices => ("local_auth.devices", Daemon, ControlPlane, false, serde_json::Value, serde_json::Value, []),
     LocalAuthRevoke => ("local_auth.revoke", Daemon, ControlPlane, false, serde_json::Value, serde_json::Value, []),
@@ -134,14 +134,14 @@ methods! {
     ToolNavigateBack => ("tool.navigate_back", Extension, BrowserMutation, true, NavigateBackParams, NavigateBackResult, [ActionConditions]),
     ToolNavigateForward => ("tool.navigate_forward", Extension, BrowserMutation, true, NavigateForwardParams, NavigateForwardResult, [ActionConditions]),
     ToolReload => ("tool.reload", Extension, BrowserMutation, true, ReloadParams, ReloadResult, [ActionConditions]),
-    ToolClick => ("tool.click", Extension, BrowserMutation, true, ClickParams, ClickResult, [ActionConditions]),
+    ToolClick => ("tool.click", Extension, BrowserMutation, true, ClickParams, ClickResult, [ActionConditions, TopFrameDomV1]),
     ToolHover => ("tool.hover", Extension, TransientInput, true, HoverParams, HoverResult, [ActionConditions]),
     ToolDrag => ("tool.drag", Extension, BrowserMutation, true, DragParams, DragResult, [ClickMoveClick, ActionConditions]),
     ToolWheel => ("tool.wheel", Extension, BrowserMutation, true, WheelParams, WheelResult, [ActionConditions]),
     ToolScrollTo => ("tool.scroll_to", Extension, BrowserMutation, true, ScrollToParams, ScrollToResult, [ActionConditions]),
     ToolFocus => ("tool.focus", Extension, BrowserMutation, true, FocusParams, FocusResult, [ActionConditions]),
     ToolBlur => ("tool.blur", Extension, BrowserMutation, true, BlurParams, BlurResult, [ActionConditions]),
-    ToolFill => ("tool.fill", Extension, BrowserMutation, true, FillParams, FillResult, [ActionConditions]),
+    ToolFill => ("tool.fill", Extension, BrowserMutation, true, FillParams, FillResult, [ActionConditions, TopFrameDomV1]),
     ToolPress => ("tool.press", Extension, BrowserMutation, true, PressParams, PressResult, [ActionConditions]),
     ToolSelect => ("tool.select", Extension, BrowserMutation, true, SelectParams, SelectResult, [ActionConditions]),
     ToolUpload => ("tool.upload", Extension, BrowserMutation, true, UploadParams, UploadResult, [ActionConditions]),

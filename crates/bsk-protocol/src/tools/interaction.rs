@@ -40,6 +40,10 @@ pub enum MouseButton {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ClickParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accept_dom_dispatch: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_document_id: Option<String>,
     /// Single-use capture returned by a visual-ref screenshot; requires image coordinates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_id: Option<String>,
@@ -220,6 +224,10 @@ pub struct BlurResult {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FillParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accept_dom_dispatch: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_document_id: Option<String>,
     pub session_id: String,
     pub value: String,
     #[serde(
@@ -372,6 +380,8 @@ mod tests {
     #[test]
     fn click_params_serialise_ref_field_name() {
         let p = ClickParams {
+            accept_dom_dispatch: None,
+            target_document_id: None,
             capture_id: None,
             image_x: None,
             image_y: None,
@@ -476,6 +486,8 @@ mod tests {
     #[test]
     fn fill_params_default_clear_before_is_omitted() {
         let p = FillParams {
+            accept_dom_dispatch: None,
+            target_document_id: None,
             session_id: "abcd".into(),
             value: "hello".into(),
             ref_: Some("@e1".into()),

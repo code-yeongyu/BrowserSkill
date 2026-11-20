@@ -1,7 +1,7 @@
 {
   "source": "bsk-protocol",
-  "fingerprint": "6c31fbf65825579550c1521951b2b892ab2f8f077fff1453b9b15a30e99aec37",
-  "protocol_version": "1.9",
+  "fingerprint": "4859d8d522bd00722f8088a9ce81eae5dbd87fb4969bedb3f5100105e7023802",
+  "protocol_version": "1.10",
   "min_compatible_protocol": "1.0",
   "feature_requirements": [
     {
@@ -89,6 +89,19 @@
       "when": {
         "field": "unverified",
         "kind": "true"
+      }
+    },
+    {
+      "daemon": "1.10",
+      "extension": "1.10",
+      "feature": "top_frame_dom_v1",
+      "operation": "top-frame DOM control",
+      "when": {
+        "fields": [
+          "allow_top_frame_dom",
+          "accept_dom_dispatch"
+        ],
+        "kind": "any_true"
       }
     }
   ],

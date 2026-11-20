@@ -235,6 +235,10 @@ function defineBrowserOperations(deps: ToolDeps, register: DefinitionRegistrar):
           policy: CONTROL_POLICY_PARAM,
           ...SAVED_OBSERVATION_PARAMETERS,
           maxTokens: { type: "integer", description: "Token cap for synchronized observations." },
+          allowTopFrameDom: {
+            type: "boolean",
+            description: "Sync only: opt into synthetic top-frame control on a debugger denial.",
+          },
           settle: {
             type: "boolean",
             description: "Sync only: bounded read-only recovery; never repeats an action.",
@@ -253,9 +257,12 @@ function defineBrowserOperations(deps: ToolDeps, register: DefinitionRegistrar):
               args.baseline !== undefined ||
               args.matchText?.length ||
               args.contextLines !== undefined ||
-              args.settle)
+              args.settle ||
+              args.allowTopFrameDom)
           )
-            throw new Error("saveFull, baseline, matchText, contextLines and settle require sync");
+            throw new Error(
+              "saveFull, baseline, matchText, contextLines, settle and allowTopFrameDom require sync",
+            );
           if (
             args.timeoutMs !== undefined &&
             (!Number.isSafeInteger(args.timeoutMs) || args.timeoutMs < 0 || args.timeoutMs > 25_000)
@@ -278,6 +285,7 @@ function defineBrowserOperations(deps: ToolDeps, register: DefinitionRegistrar):
           if (action === "sync" || action === "enable") cmd.push("--policy", args.policy ?? "auto");
           appendSavedObservationOptions(cmd, args);
           if (args.settle) cmd.push("--settle");
+          if (args.allowTopFrameDom) cmd.push("--allow-top-frame-dom");
           return (await runBsk(
             deps,
             exec,
@@ -859,6 +867,10 @@ function defineBrowserOperations(deps: ToolDeps, register: DefinitionRegistrar):
           type: "integer",
           description: "Number of consecutive presses (double-click = 2).",
         },
+        acceptDomDispatch: {
+          type: "boolean",
+          description: "Accept synthetic dispatch for an explicit top-frame context.",
+        },
       },
       output: {
         schema: {
@@ -882,6 +894,7 @@ function defineBrowserOperations(deps: ToolDeps, register: DefinitionRegistrar):
         if (args.target.trim().length === 0) throw new Error("target must be a non-empty string");
         const sessionId = registry.resolve(args.session, "bsk_interact(action=click)");
         const cmdArgs = ["click", "--session", sessionId];
+        if (args.acceptDomDispatch) cmdArgs.push("--accept-dom-dispatch");
         if (args.button !== undefined) cmdArgs.push("--button", args.button);
         if (args.clickCount !== undefined) cmdArgs.push("--click-count", String(args.clickCount));
         if (
@@ -932,6 +945,10 @@ function defineBrowserOperations(deps: ToolDeps, register: DefinitionRegistrar):
         },
         value: { type: "string", required: true, description: "Text to type into the element." },
         session: SESSION_PARAM,
+        acceptDomDispatch: {
+          type: "boolean",
+          description: "Accept synthetic dispatch for an explicit top-frame context.",
+        },
         noClear: {
           type: "boolean",
           description:
@@ -961,6 +978,7 @@ function defineBrowserOperations(deps: ToolDeps, register: DefinitionRegistrar):
         const sessionId = registry.resolve(args.session, "bsk_interact(action=fill)");
         // `--value=<v>`: clap rejects a separate value token starting with "-".
         const cmdArgs = ["fill", "--session", sessionId, `--value=${args.value}`];
+        if (args.acceptDomDispatch) cmdArgs.push("--accept-dom-dispatch");
         if (args.noClear === true) cmdArgs.push("--no-clear");
         cmdArgs.push(args.target);
         const reply = (await runBsk(deps, exec, cmdArgs, "fill", sessionId)) as {

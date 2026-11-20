@@ -551,6 +551,16 @@ export type RpcErrorReason =
   | "window_resize_viewport_unchanged"
   | "restricted_tab_url"
   | "cdp_extension_access_denied"
+  | "top_frame_injection_denied"
+  | "stale_context"
+  | "stale_target"
+  | "target_unobservable"
+  | "target_in_foreign_extension_frame"
+  | "unsupported_in_degraded_mode"
+  | "dom_dispatch_opt_in_required"
+  | "guard_mismatch"
+  | "synthetic_input_unconfirmed"
+  | "intent_journal_unavailable"
   | "observe_identity_reload_loop"
   | "borrow_agent_window_tab"
   | "borrow_conflict"
@@ -1174,6 +1184,7 @@ export interface CancelResult {
  * via the `definition` "ClickParams".
  */
 export interface ClickParams {
+  accept_dom_dispatch?: boolean;
   button?: MouseButton;
   /**
    * Single-use capture returned by a visual-ref screenshot; requires image coordinates.
@@ -1225,6 +1236,7 @@ export interface ClickParams {
    * Target tab. Defaults to the Agent Window's active tab.
    */
   tab_id?: number;
+  target_document_id?: string;
   timeout_ms?: number;
 }
 /**
@@ -1329,6 +1341,10 @@ export interface ControllerInfo {
  */
 export interface CooperateParams {
   action: CooperateAction;
+  /**
+   * Allows synthetic top-document control only on a classified debugger denial.
+   */
+  allow_top_frame_dom?: boolean;
   /**
    * Omitted by legacy callers. A negotiated policy remains fixed for the session.
    */
@@ -2495,6 +2511,7 @@ export interface ExtractTarget {
  * via the `definition` "FillParams".
  */
 export interface FillParams {
+  accept_dom_dispatch?: boolean;
   /**
    * Clear the field before typing. Defaults to `true`; pass `false`
    * to append instead of replacing.
@@ -2531,6 +2548,7 @@ export interface FillParams {
   selector?: string;
   session_id: string;
   tab_id?: number;
+  target_document_id?: string;
   timeout_ms?: number;
   value: string;
 }

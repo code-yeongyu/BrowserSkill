@@ -776,6 +776,7 @@ fn run_settled_cooperate_sync(
         let is_sync = matches!(action, CooperateAction::Sync);
         let is_wait = matches!(action, CooperateAction::Wait);
         let mut req_val = serde_json::to_value(CooperateParams {
+            allow_top_frame_dom: None,
             control_policy: is_sync.then_some(control_policy),
             session_id: session_id_param.to_string(),
             tab_id: tab_id_param,

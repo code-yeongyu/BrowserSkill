@@ -46,6 +46,7 @@ pub enum Feature {
     ActionConditions,
     DomRead,
     UnverifiedScript,
+    TopFrameDomV1,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -54,6 +55,9 @@ pub enum FeatureWhen {
     Always,
     True {
         field: &'static str,
+    },
+    AnyTrue {
+        fields: &'static [&'static str],
     },
     Present {
         field: &'static str,
@@ -89,6 +93,7 @@ impl Feature {
         Self::ActionConditions,
         Self::DomRead,
         Self::UnverifiedScript,
+        Self::TopFrameDomV1,
     ];
 
     pub const fn requirement(self) -> &'static FeatureRequirement {
@@ -166,6 +171,15 @@ impl Feature {
                     field: "unverified",
                 },
             },
+            Self::TopFrameDomV1 => &FeatureRequirement {
+                feature: Self::TopFrameDomV1,
+                operation: "top-frame DOM control",
+                daemon: "1.10",
+                extension: "1.10",
+                when: FeatureWhen::AnyTrue {
+                    fields: &["allow_top_frame_dom", "accept_dom_dispatch"],
+                },
+            },
         }
     }
 
@@ -199,6 +213,9 @@ impl Feature {
         match self.requirement().when {
             FeatureWhen::Always => true,
             FeatureWhen::True { field } => params.get(field) == Some(&Value::Bool(true)),
+            FeatureWhen::AnyTrue { fields } => fields
+                .iter()
+                .any(|field| params.get(field) == Some(&Value::Bool(true))),
             FeatureWhen::Present { field } => params.get(field).is_some_and(|v| !v.is_null()),
             FeatureWhen::Equals { field, value } => {
                 params.get(field).and_then(Value::as_str) == Some(value)
@@ -263,4 +280,26 @@ pub fn check_request(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod top_frame_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_top_frame_opt_in_requires_support_on_each_peer() {
+        let requests = [
+            (Method::ToolCooperate, json!({"allow_top_frame_dom":true})),
+            (Method::ToolFill, json!({"accept_dom_dispatch":true})),
+            (Method::ToolClick, json!({"accept_dom_dispatch":true})),
+        ];
+        for (method, params) in requests {
+            for peer in [Peer::Daemon, Peer::Extension] {
+                let err = check_request(&method, &params, peer, "1.9").unwrap_err();
+                assert_eq!(err.data.unwrap()["feature"], "top_frame_dom_v1");
+                assert!(check_request(&method, &params, peer, "1.10").is_ok());
+                assert!(check_request(&method, &json!({}), peer, "1.9").is_ok());
+            }
+        }
+    }
 }

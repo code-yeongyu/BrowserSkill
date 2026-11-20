@@ -43,9 +43,21 @@ function wireNote(note) {
 }
 if (controls.isConnected) {
   effects.crossDocumentActivations = sessionStorage.getItem("activations") ?? "0";
+  if (mode === "redaction") {
+    document
+      .getElementById("note")
+      .setAttribute("aria-label", "Note [ctx: private fixture marker]");
+  }
   wireNote(document.getElementById("note"));
   document.getElementById("activate").addEventListener("click", () => {
     effects.activations = String(Number(effects.activations) + 1);
+    if (mode === "pause-on-activation") {
+      navigator.sendBeacon("/checkpoint", "activated");
+      const deadline = performance.now() + 1000;
+      while (performance.now() < deadline) {
+        // Hold the mutation receipt long enough for the daemon cancellation.
+      }
+    }
     if (mode === "navigate-on-activation") {
       sessionStorage.setItem(
         "activations",

@@ -80,6 +80,9 @@ pub struct CooperateArgs {
     /// Never repeats a browser action. A human hold returns without a context.
     #[arg(long)]
     pub settle: bool,
+    /// Allow a separately guarded, synthetic top-frame backend on debugger denial.
+    #[arg(long)]
+    pub allow_top_frame_dom: bool,
 }
 
 pub fn dispatch(args: CooperateArgs, _format: Format) -> Result<(), CliError> {
@@ -94,10 +97,11 @@ pub fn dispatch(args: CooperateArgs, _format: Format) -> Result<(), CliError> {
         && (!args.match_text.is_empty()
             || args.save_full.is_some()
             || args.settle
+            || args.allow_top_frame_dom
             || args.baseline.is_some())
     {
         return Err(CliError::Local(anyhow::anyhow!(
-            "--match-text, --save-full, --baseline and --settle require cooperate sync"
+            "--match-text, --save-full, --baseline, --settle and --allow-top-frame-dom require cooperate sync"
         )));
     }
     let baseline = args
@@ -117,6 +121,7 @@ pub fn dispatch(args: CooperateArgs, _format: Format) -> Result<(), CliError> {
     business_rpc::set_caller_scope(args.scope.clone());
     let daemon = ensure_daemon().context("ensure daemon is running")?;
     let params = CooperateParams {
+        allow_top_frame_dom: args.allow_top_frame_dom.then_some(true),
         control_policy,
         session_id: session.clone(),
         tab_id: args.tab_id,
@@ -134,6 +139,7 @@ pub fn dispatch(args: CooperateArgs, _format: Format) -> Result<(), CliError> {
             let mut current = params.clone();
             if matches!(action, CooperateAction::Wait) {
                 current.control_policy = None;
+                current.allow_top_frame_dom = None;
                 current.timeout_ms = Some(args.timeout_ms.unwrap_or(1000));
             }
             current.action = action;

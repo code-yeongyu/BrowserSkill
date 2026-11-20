@@ -31,6 +31,13 @@
     "action": {
       "$ref": "#/definitions/CooperateAction"
     },
+    "allow_top_frame_dom": {
+      "description": "Allows synthetic top-document control only on a classified debugger denial.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "control_policy": {
       "anyOf": [
         {
