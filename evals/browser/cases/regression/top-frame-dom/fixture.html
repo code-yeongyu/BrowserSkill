@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Top-frame DOM test fixture</title>
+<style>
+  input, textarea, button { display: block; margin: 0; }
+  #note { position: fixed; top: 38px; left: 30px }
+  #covered { position: fixed; top: 121px; left: 30px }
+  #memo { position: fixed; top: 166px; left: 30px }
+  #activate { position: fixed; top: 230px; left: 30px }
+  #replace { position: fixed; top: 270px; left: 30px }
+</style>
+<form id="controls">
+  <input id="note" type="text" aria-label="Note">
+  <input id="covered" type="text" aria-label="Covered">
+  <textarea id="memo" aria-label="Memo"></textarea>
+  <button id="activate" type="button" disabled>Activate</button>
+  <button id="replace" type="button">Replace note</button>
+</form>
+<output id="effects" data-inputs="0" data-activations="0" data-child-effects="0"></output>
+<script src="/fixture.js"></script>

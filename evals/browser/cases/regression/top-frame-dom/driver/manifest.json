@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "Top-frame test driver",
+  "version": "1.0.0",
+  "permissions": ["debugger", "scripting"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "worker.js" }
+}
